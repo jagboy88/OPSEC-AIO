@@ -1,12 +1,26 @@
 import Fastify, { LogController, type FastifyError, type FastifyInstance } from 'fastify';
 import { API_PREFIX, type ErrorResponse } from '@opsec-aio/types';
+import type { Redis } from 'ioredis';
 import type { Config } from './config.js';
+import type { Pool } from './db.js';
+import { registerRateLimit } from './ratelimit.js';
 import { healthRoutes, type Probe } from './routes/health.js';
+import { noteRoutes } from './routes/notes.js';
 
 export interface AppDeps {
   config: Pick<Config, 'logLevel' | 'trustProxyHops'>;
   /** Named readiness checks (database, redis, storage…). */
   probes: Record<string, Probe>;
+  /**
+   * Data layer. When absent (unit tests of the shell) only health routes exist.
+   * Callers must have awaited `ready()` from @opsec-aio/crypto.
+   */
+  data?: {
+    pool: Pool;
+    tokenPepper: Uint8Array;
+    /** Rate-limit store; in-process memory when absent. */
+    redis?: Redis;
+  };
 }
 
 /** Default JSON body limit; endpoints that accept more opt in explicitly. */
@@ -67,6 +81,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await app.register(healthRoutes, { prefix: API_PREFIX, probes: deps.probes });
+
+  if (deps.data) {
+    const { pool, tokenPepper, redis } = deps.data;
+    await registerRateLimit(app, { pepper: tokenPepper, ...(redis ? { redis } : {}) });
+    await app.register(noteRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
+  }
 
   return app;
 }

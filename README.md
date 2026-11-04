@@ -11,8 +11,8 @@ The full specification and the decisions behind it are in [`docs/PLAN.md`](docs/
 | Phase | Scope                                                                              | State   |
 | ----- | ---------------------------------------------------------------------------------- | ------- |
 | 0     | Monorepo, crypto library + known-answer tests, API/web skeletons, Docker stack, CI | ✅ Done |
-| 1     | Burn (notes)                                                                       | Next    |
-| 2     | Drop (files)                                                                       | —       |
+| 1     | Burn (notes): API, crypto format, UI, end-to-end tests                             | ✅ Done |
+| 2     | Drop (files)                                                                       | Next    |
 | 3     | Chat                                                                               | —       |
 | 4     | Hardening & launch                                                                 | —       |
 
@@ -20,10 +20,11 @@ The full specification and the decisions behind it are in [`docs/PLAN.md`](docs/
 
 ```
 apps/api          Fastify API (TypeScript): health/readiness, migrations, privacy-preserving logging
-apps/web          SvelteKit static SPA: landing page, in-browser crypto self-test (/selftest)
+apps/web          SvelteKit static SPA: Burn (/burn, /n/<id>), crypto self-test (/selftest)
 packages/crypto   All client-side crypto: versioned AEAD envelopes, file streams, Argon2id, Ed25519, X25519
 packages/types    Shared API contracts and product limits (the §10 decisions, in code)
 infra/caddy       Edge: TLS 1.3 only, security headers, generated CSP
+e2e/              Playwright tests against the running Docker stack
 docs/             PLAN.md (spec + decisions), DEPLOY.md (VPS runbook)
 ```
 
@@ -52,6 +53,7 @@ Full stack locally (served at https://localhost with Caddy's internal CA):
 ./scripts/init-secrets.sh
 cp .env.example .env
 docker compose up -d --build
+pnpm e2e           # browser tests against the running stack (first: pnpm --filter @opsec-aio/e2e exec playwright install chromium)
 ```
 
 ## Cryptography at a glance

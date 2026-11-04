@@ -23,8 +23,10 @@ export const DROP_ANONYMOUS_UPLOADS = true;
 // ── Burn ────────────────────────────────────────────────────────────────────
 /** Max plaintext note size: 64 KiB. */
 export const NOTE_MAX_PLAINTEXT_BYTES = 64 * 1024;
-/** Envelope overhead (header + nonce + tag) plus room for a password-wrapped key. */
-export const NOTE_MAX_CIPHERTEXT_BYTES = NOTE_MAX_PLAINTEXT_BYTES + 1024;
+/** Text + 1 KiB padding + password wrap + two AEAD envelopes, rounded up to 68 KiB. */
+export const NOTE_MAX_CIPHERTEXT_BYTES = 68 * 1024;
+/** One bare AEAD envelope (header 2 + nonce 24 + tag 16). */
+export const NOTE_MIN_CIPHERTEXT_BYTES = 42;
 export const NOTE_EXPIRY_OPTIONS_SECONDS = [1 * HOUR, 1 * DAY, 7 * DAY, 30 * DAY] as const;
 export const NOTE_DEFAULT_TTL_SECONDS = 7 * DAY;
 export const NOTE_MAX_TTL_SECONDS = 30 * DAY;
@@ -61,4 +63,5 @@ export const RATE_LIMITS = {
   dropUpload: { max: 20, windowSeconds: HOUR },
   noteCreate: { max: 60, windowSeconds: HOUR },
   noteOpen: { max: 60, windowSeconds: MINUTE },
+  noteDelete: { max: 30, windowSeconds: MINUTE },
 } as const;

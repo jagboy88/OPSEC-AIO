@@ -294,14 +294,14 @@ IDs for drops/notes: 128-bit random, base64url (22 chars). Never sequential.
 
 ## 9. Build phases
 
-**Phase 0 — Foundations (week 1)**
+**Phase 0 — Foundations (week 1)** ✅ done
 
 - Monorepo: `apps/web`, `apps/api`, `packages/crypto` (shared TS crypto helpers wrapping libsodium with a stable API and version bytes), `packages/types`.
 - Docker Compose with Caddy, API, Postgres, Redis, and a blob volume (✅ done; MinIO replaced, see §12).
 - CI: lint, typecheck, unit tests, dependency audit.
 - Write `packages/crypto` first with **test vectors** and a known-answer test suite.
 
-**Phase 1 — Burn (week 2)**
+**Phase 1 — Burn (week 2)** ✅ done (see §12 items 9–14)
 
 - Simplest module; proves the whole zero-knowledge pipeline end-to-end (fragment keys, atomic delete, headers, rate limits).
 
@@ -363,3 +363,10 @@ Changes made while building, with the reason. Update this list whenever the code
 6. **Reproducible web build** from Phase 0: SvelteKit's version name is pinned (`BUILD_VERSION`, default `dev`), so the same sources produce the same `buildHash`, which CI publishes.
 7. **Kyber/PQXDH prekeys** are not in the initial schema; they will be added by a Phase 3 migration once the libsignal version is pinned.
 8. **Timestamps in `created_at`** are kept at full precision for now; consider coarsening them to the hour in Phase 4 for metadata minimisation.
+9. **Burn note format.** `stored = seal(K, inner)`, where `inner` is a version byte, a flags byte, and either the payload or `wrap(C, password) ‖ seal(C, payload)`. The payload is padded to 1 KiB blocks (ISO/IEC 7816-4), so the server learns only a size bucket. With a password, the wrapped key sits _inside_ the link-key envelope, so a database leak alone doesn't allow offline password guessing. Pinned vectors live in `packages/crypto/test/fixtures/note-vectors.json`.
+10. **Link fragments.** `#<key>` or `#<key>.p` (the `.p` flag tells the recipient's page a password will be needed, before it burns the note). Deletion links are `/n/<id>#del.<token>`, so the token is also never sent in a URL the server sees. After use, the page removes the fragment from the address bar.
+11. **Note size cap raised to 68 KiB of ciphertext** (migration `002_note_size.sql`) to fit the padding and the password wrap around 64 KiB of text.
+12. **Rate-limit keys never contain IPs.** The key is a BLAKE2b MAC of `(UTC day, IP)` under the server pepper, with IPv6 grouped by /64. If Redis is down, limits fail open so notes stay readable.
+13. **Notes render as plain text.** Markdown rendering is deferred: it needs a sanitiser, and plain text has no XSS surface. "Notify me when read" is deferred to Phase 3 (it needs a chat account).
+14. **Argon2id runs on the main thread** (about 1 s pause when a password is used). Move it to a Web Worker in Phase 4.
+15. **CI build fix.** Phase 0's root `pnpm build` used unquoted globs that the shell expanded, so it silently built nothing; it is now `pnpm -r run build`.

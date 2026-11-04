@@ -1,27 +1,25 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
   import WhoCanRead from '#lib/components/WhoCanRead.svelte';
 
   const modules = [
     {
       name: 'Chat',
-      href: '/chat',
       blurb: 'End-to-end encrypted 1:1 and small-group chat with disappearing messages.',
       detail: 'Signal Protocol · account required',
       status: 'Phase 3',
     },
     {
       name: 'Drop',
-      href: '/drop',
       blurb: 'Send an encrypted file with a link. Deleted 24 hours after upload, no exceptions.',
       detail: 'Up to 2 GB · no account',
       status: 'Phase 2',
     },
     {
       name: 'Burn',
-      href: '/burn',
       blurb: 'A note that is destroyed the moment it is read.',
       detail: 'Up to 64 KB · no account',
-      status: 'Phase 1',
+      status: null,
     },
   ];
 </script>
@@ -38,19 +36,38 @@
 
 <section aria-label="Modules" class="grid gap-4 sm:grid-cols-3">
   {#each modules as m (m.name)}
-    <div
-      class="flex flex-col rounded-xl border border-neutral-800 bg-neutral-900 p-5"
-      aria-disabled="true"
-    >
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-neutral-50">{m.name}</h2>
-        <span class="rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400">
-          Coming in {m.status}
-        </span>
+    {#if m.status === null}
+      <a
+        href={resolve('/burn')}
+        class="group flex flex-col rounded-xl border border-emerald-500/30 bg-neutral-900 p-5 hover:border-emerald-400"
+      >
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-neutral-50">{m.name}</h2>
+          <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-400">
+            Available
+          </span>
+        </div>
+        <p class="mt-2 flex-1 text-sm text-neutral-300">{m.blurb}</p>
+        <p class="mt-4 text-xs text-neutral-500">{m.detail}</p>
+        <span class="mt-3 text-sm font-medium text-emerald-400 group-hover:underline"
+          >Write a note →</span
+        >
+      </a>
+    {:else}
+      <div
+        class="flex flex-col rounded-xl border border-neutral-800 bg-neutral-900 p-5"
+        aria-disabled="true"
+      >
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-neutral-50">{m.name}</h2>
+          <span class="rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400">
+            Coming in {m.status}
+          </span>
+        </div>
+        <p class="mt-2 flex-1 text-sm text-neutral-300">{m.blurb}</p>
+        <p class="mt-4 text-xs text-neutral-500">{m.detail}</p>
       </div>
-      <p class="mt-2 flex-1 text-sm text-neutral-300">{m.blurb}</p>
-      <p class="mt-4 text-xs text-neutral-500">{m.detail}</p>
-    </div>
+    {/if}
   {/each}
 </section>
 

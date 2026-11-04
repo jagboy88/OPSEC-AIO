@@ -3,6 +3,7 @@ import { fromHex, toHex, utf8Encode } from './encoding.js';
 import { blake2b, sha256 } from './hash.js';
 import { deriveKeyFromPassword } from './kdf.js';
 import { kxPublicKey, x25519 } from './kx.js';
+import { decryptNote, encryptNote } from './note.js';
 import { generateKey } from './random.js';
 import { sign, signingKeyPairFromSeed, verify } from './sign.js';
 import { ready } from './sodium.js';
@@ -118,6 +119,12 @@ export async function runSelfTest(): Promise<SelfTestResult[]> {
     const tail = dec.pull(c2);
     dec.finish();
     return toHex(tail) === toHex(utf8Encode('tail'));
+  });
+
+  await check('Burn note round-trip', async () => {
+    const { key, ciphertext } = await encryptNote('self-test ✓');
+    const n = await decryptNote(key, ciphertext);
+    return !n.locked && n.text === 'self-test ✓';
   });
 
   return results;

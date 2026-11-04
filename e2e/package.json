@@ -1,0 +1,14 @@
+{
+  "name": "@opsec-aio/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end browser tests against the running Docker Compose stack.",
+  "scripts": {
+    "e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

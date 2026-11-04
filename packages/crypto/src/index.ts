@@ -54,5 +54,20 @@ export {
 } from './sign.js';
 export { generateKxKeyPair, kxPublicKey, x25519, type KxKeyPair } from './kx.js';
 export { blake2b, constantTimeEqual, hashToken, sha256, wipe } from './hash.js';
-export { buildShareLink, keyFromFragment, keyToFragment } from './link.js';
+export {
+  buildShareLink,
+  keyFromFragment,
+  keyToFragment,
+  parseFragment,
+  type LinkSecret,
+} from './link.js';
+export {
+  NOTE_PADDING_BLOCK,
+  NOTE_TEXT_MAX_BYTES,
+  decryptNote,
+  encryptNote,
+  type EncryptNoteOptions,
+  type EncryptedNote,
+  type OpenedNote,
+} from './note.js';
 export { runSelfTest, type SelfTestResult } from './selftest.js';

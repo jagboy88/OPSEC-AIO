@@ -27,6 +27,7 @@
       OpSec AIO
     </a>
     <nav aria-label="Primary" class="flex gap-5 text-sm text-neutral-400">
+      <a href={resolve('/burn')} class="hover:text-neutral-100">Burn</a>
       <a href={resolve('/selftest')} class="hover:text-neutral-100">Self-test</a>
     </nav>
   </header>

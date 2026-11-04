@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - e2e
 
 # Block install scripts by default; only allow what we have reviewed.
 onlyBuiltDependencies:

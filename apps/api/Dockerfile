@@ -9,6 +9,7 @@ COPY packages/crypto/package.json packages/crypto/
 COPY packages/types/package.json packages/types/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY e2e/package.json e2e/
 RUN pnpm install --frozen-lockfile --filter "@opsec-aio/api..."
 COPY packages/crypto packages/crypto
 COPY packages/types packages/types

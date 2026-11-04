@@ -5,6 +5,7 @@ import { ready as cryptoReady } from '@opsec-aio/crypto';
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { MIGRATIONS_DIR, createPool, migrate } from './db.js';
+import { startSweeper } from './sweeper.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -29,15 +30,22 @@ async function main(): Promise<void> {
     probes.storage = () => access(dir, constants.R_OK | constants.W_OK);
   }
 
-  const app = await buildApp({ config, probes });
+  const app = await buildApp({
+    config,
+    probes,
+    data: { pool, tokenPepper: config.tokenPepper, redis },
+  });
 
   if (config.migrateOnStart) {
     const applied = await migrate(pool, MIGRATIONS_DIR);
     if (applied.length) app.log.info({ applied }, 'migrations applied');
   }
 
+  const stopSweeper = startSweeper(pool, app.log);
+
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
+    stopSweeper();
     await app.close();
     await pool.end();
     redis.disconnect();

@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { ready as cryptoReady } from '@opsec-aio/crypto';
 import { buildApp } from './app.js';
 import { DiskBlobStore } from './blobs.js';
+import { RedisNotifier } from './notifier.js';
 import { loadConfig } from './config.js';
 import { MIGRATIONS_DIR, createPool, migrate } from './db.js';
 import { startSweeper } from './sweeper.js';
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
     /* surfaced via /ready; avoid log spam that could include hostnames */
   });
 
+  const notifier = new RedisNotifier(redis);
   const blobs = config.blobDir ? new DiskBlobStore(config.blobDir) : undefined;
 
   const probes: Record<string, () => Promise<void>> = {
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
       pool,
       tokenPepper: config.tokenPepper,
       redis,
+      notifier,
       ...(blobs ? { blobs, dropStorageMaxBytes: config.dropStorageMaxBytes } : {}),
     },
   });
@@ -56,6 +59,7 @@ async function main(): Promise<void> {
     stopSweeper();
     await app.close();
     await pool.end();
+    await notifier.close();
     redis.disconnect();
     process.exit(0);
   };

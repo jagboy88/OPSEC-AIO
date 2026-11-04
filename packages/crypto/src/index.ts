@@ -87,3 +87,4 @@ export {
   type OpenedDrop,
 } from './drop.js';
 export { runSelfTest, type SelfTestResult } from './selftest.js';
+export { authChallengeMessage } from './auth.js';

@@ -1,12 +1,17 @@
+import websocket from '@fastify/websocket';
 import Fastify, { LogController, type FastifyError, type FastifyInstance } from 'fastify';
 import { API_PREFIX, type ErrorResponse } from '@opsec-aio/types';
 import type { Redis } from 'ioredis';
 import type { BlobStore } from './blobs.js';
 import type { Config } from './config.js';
 import type { Pool } from './db.js';
+import { MemoryNotifier, type Notifier } from './notifier.js';
 import { registerRateLimit } from './ratelimit.js';
 import { healthRoutes, type Probe } from './routes/health.js';
+import { authRoutes } from './routes/auth.js';
 import { dropRoutes } from './routes/drops.js';
+import { keyRoutes } from './routes/keys.js';
+import { messageRoutes } from './routes/messages.js';
 import { noteRoutes } from './routes/notes.js';
 
 export interface AppDeps {
@@ -25,6 +30,8 @@ export interface AppDeps {
     /** Drop storage; Drop routes are only registered when present. */
     blobs?: BlobStore;
     dropStorageMaxBytes?: number;
+    /** Cross-process WebSocket fan-out; in-process when absent. */
+    notifier?: Notifier;
   };
 }
 
@@ -39,6 +46,8 @@ function errorCode(status: number): ErrorResponse['error'] {
   if (status === 413) return 'payload_too_large';
   if (status === 429) return 'rate_limited';
   if (status === 507) return 'storage_full';
+  if (status === 401) return 'unauthorized';
+  if (status === 409) return 'conflict';
   if (status >= 400 && status < 500) return 'bad_request';
   return 'internal';
 }
@@ -95,6 +104,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const { pool, tokenPepper, redis } = deps.data;
     await registerRateLimit(app, { pepper: tokenPepper, ...(redis ? { redis } : {}) });
     await app.register(noteRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
+    // Chat (Phase 3). WebSocket frames from clients are tiny control messages.
+    await app.register(websocket, { options: { maxPayload: 4096 } });
+    await app.register(authRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
+    await app.register(keyRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
+    await app.register(messageRoutes, {
+      prefix: API_PREFIX,
+      pool,
+      pepper: tokenPepper,
+      notifier: deps.data.notifier ?? new MemoryNotifier(),
+    });
     if (deps.data.blobs) {
       await app.register(dropRoutes, {
         prefix: API_PREFIX,

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@fastify/rate-limit": "^11.2.2",
+    "@fastify/websocket": "^11.3.7",
     "@opsec-aio/crypto": "workspace:*",
     "@opsec-aio/types": "workspace:*",
     "fastify": "^5.12.8",
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15"
   }
 }

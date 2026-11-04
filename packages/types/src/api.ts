@@ -24,6 +24,8 @@ export interface ErrorResponse {
     | 'rate_limited'
     | 'payload_too_large'
     | 'storage_full'
+    | 'unauthorized'
+    | 'conflict'
     | 'internal';
 }
 
@@ -82,15 +84,29 @@ export interface DeleteDropRequest {
   upload_token?: string;
 }
 
-// ── Auth / keys (Phase 3) ───────────────────────────────────────────────────
+// ── Auth (Phase 3) ──────────────────────────────────────────────────────────
+// The passphrase never leaves the device: it only unlocks the local keystore.
+// The server authenticates by Ed25519 challenge–response on `auth_pub`.
+export interface PreKeyUpload {
+  key_id: number;
+  pub: B64;
+}
+export interface SignedPreKeyUpload extends PreKeyUpload {
+  /** XEdDSA signature by the Signal identity key. */
+  sig: B64;
+}
 export interface RegisterRequest {
   username: string;
-  /** Ed25519 key used only for challenge–response login. */
+  /** Ed25519 key used only for login. */
   auth_pub: B64;
-  /** Signal identity key. */
+  /** Signal identity key (33 bytes, type-prefixed Curve25519). */
   identity_pub: B64;
-  signed_prekey: { key_id: number; pub: B64; sig: B64 };
-  one_time_prekeys: { key_id: number; pub: B64 }[];
+  registration_id: number;
+  signed_prekey: SignedPreKeyUpload;
+  one_time_prekeys: PreKeyUpload[];
+}
+export interface RegisterResponse {
+  username: string;
 }
 export interface ChallengeRequest {
   username: string;
@@ -101,19 +117,65 @@ export interface ChallengeResponse {
 export interface LoginRequest {
   username: string;
   nonce: B64;
+  /** Ed25519 signature over authChallengeMessage(username, nonce). */
   signature: B64;
 }
 export interface LoginResponse {
   session_token: string;
+  expires_at: string;
 }
 
-// ── Chat (Phase 3) ──────────────────────────────────────────────────────────
-export interface SendMessageRequest {
+// ── Keys (Phase 3) ──────────────────────────────────────────────────────────
+export interface KeyBundleResponse {
+  username: string;
+  identity_pub: B64;
+  registration_id: number;
+  signed_prekey: SignedPreKeyUpload;
+  /** null when the user has run out; X3DH then proceeds without one. */
+  one_time_prekey: PreKeyUpload | null;
+}
+export interface PreKeyCountResponse {
+  one_time_prekeys: number;
+}
+export interface UploadPreKeysRequest {
+  one_time_prekeys: PreKeyUpload[];
+}
+
+// ── Messages (Phase 3) ──────────────────────────────────────────────────────
+/** Signal message types: 3 = PreKeyWhisperMessage (first), 1 = WhisperMessage. */
+export type SignalMessageType = 1 | 3;
+export interface OutgoingMessage {
   to: string;
-  msg_id: string;
-  header: B64;
-  ciphertext: B64;
+  type: SignalMessageType;
+  body: B64;
+}
+/** Groups are pairwise fan-out: one request carries one ciphertext per member. */
+export interface SendMessagesRequest {
+  messages: OutgoingMessage[];
+}
+export interface SendMessagesResponse {
+  sent: number;
+}
+export interface IncomingMessage {
+  id: string;
+  /** null if the sender has since deleted their account. */
+  from: string | null;
+  type: SignalMessageType;
+  body: B64;
+  sent_at: string;
+}
+export interface PendingMessagesResponse {
+  messages: IncomingMessage[];
 }
 export interface AckRequest {
-  msg_ids: string[];
+  ids: string[];
 }
+
+// WebSocket /api/v1/ws — browsers cannot set headers on WebSockets, so the
+// session token is sent as the first message.
+export type WsClientMessage = { type: 'auth'; token: string } | { type: 'ping' };
+export type WsServerMessage =
+  | { type: 'ready' }
+  | { type: 'pong' }
+  | { type: 'message'; message: IncomingMessage }
+  | { type: 'error'; error: 'unauthorized' | 'bad_request' };

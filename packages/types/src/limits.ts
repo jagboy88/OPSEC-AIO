@@ -67,6 +67,17 @@ export const MAILBOX_MAX_AGE_SECONDS = 30 * DAY;
 /** Generated usernames allowed (decision #6). */
 export const CHAT_ANONYMOUS_USERNAMES = true;
 export const USERNAME_PATTERN = /^[a-z0-9_]{3,32}$/;
+/** Max one-time prekeys stored per user. */
+export const ONE_TIME_PREKEY_MAX = 300;
+/** Login sessions are short: the client can always re-authenticate with its key. */
+export const SESSION_TTL_SECONDS = 24 * HOUR;
+export const AUTH_CHALLENGE_TTL_SECONDS = 2 * MINUTE;
+/** Max ciphertext per chat message. Files go through Drop, not the mailbox. */
+export const CHAT_MESSAGE_MAX_BYTES = 64 * 1024;
+/** Max ciphertexts per send request (one per group member). */
+export const CHAT_BATCH_MAX = GROUP_MAX_MEMBERS;
+/** Max undelivered messages queued for one recipient. */
+export const CHAT_MAILBOX_MAX = 5000;
 
 // ── Rate limits (per IP unless stated) ──────────────────────────────────────
 export const RATE_LIMITS = {
@@ -78,4 +89,9 @@ export const RATE_LIMITS = {
   dropMeta: { max: 60, windowSeconds: MINUTE },
   dropDownload: { max: 30, windowSeconds: MINUTE },
   dropDelete: { max: 30, windowSeconds: MINUTE },
+  authChallenge: { max: 30, windowSeconds: MINUTE },
+  authLogin: { max: 30, windowSeconds: MINUTE },
+  keyBundle: { max: 60, windowSeconds: MINUTE },
+  messageSend: { max: 240, windowSeconds: MINUTE },
+  messagePending: { max: 120, windowSeconds: MINUTE },
 } as const;

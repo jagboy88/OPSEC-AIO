@@ -23,6 +23,7 @@ describe.skipIf(!url)('migrations (postgres)', () => {
       '001_init.sql',
       '002_note_size.sql',
       '003_drops.sql',
+      '004_chat.sql',
     ]);
     expect(await migrate(pool, MIGRATIONS_DIR)).toEqual([]);
   });

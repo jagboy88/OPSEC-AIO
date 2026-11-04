@@ -55,6 +55,7 @@ export async function sweep(pool: Pool, blobs?: BlobStore): Promise<SweepResult>
     "DELETE FROM mailbox WHERE created_at <= now() - interval '30 days'",
   );
   const sessions = await pool.query('DELETE FROM sessions WHERE expires_at <= now()');
+  await pool.query('DELETE FROM auth_challenges WHERE expires_at <= now()');
   return {
     notes: notes.rowCount ?? 0,
     drops: drops.rowCount ?? 0,

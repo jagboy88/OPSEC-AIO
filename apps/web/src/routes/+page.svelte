@@ -8,18 +8,24 @@
       blurb: 'End-to-end encrypted 1:1 and small-group chat with disappearing messages.',
       detail: 'Signal Protocol · account required',
       status: 'Phase 3',
+      href: null,
+      cta: '',
     },
     {
       name: 'Drop',
       blurb: 'Send an encrypted file with a link. Deleted 24 hours after upload, no exceptions.',
       detail: 'Up to 2 GB · no account',
-      status: 'Phase 2',
+      status: null,
+      href: resolve('/drop'),
+      cta: 'Send a file →',
     },
     {
       name: 'Burn',
       blurb: 'A note that is destroyed the moment it is read.',
       detail: 'Up to 64 KB · no account',
       status: null,
+      href: resolve('/burn'),
+      cta: 'Write a note →',
     },
   ];
 </script>
@@ -36,9 +42,9 @@
 
 <section aria-label="Modules" class="grid gap-4 sm:grid-cols-3">
   {#each modules as m (m.name)}
-    {#if m.status === null}
+    {#if m.href}
       <a
-        href={resolve('/burn')}
+        href={m.href}
         class="group flex flex-col rounded-xl border border-emerald-500/30 bg-neutral-900 p-5 hover:border-emerald-400"
       >
         <div class="flex items-center justify-between">
@@ -49,9 +55,7 @@
         </div>
         <p class="mt-2 flex-1 text-sm text-neutral-300">{m.blurb}</p>
         <p class="mt-4 text-xs text-neutral-500">{m.detail}</p>
-        <span class="mt-3 text-sm font-medium text-emerald-400 group-hover:underline"
-          >Write a note →</span
-        >
+        <span class="mt-3 text-sm font-medium text-emerald-400 group-hover:underline">{m.cta}</span>
       </a>
     {:else}
       <div

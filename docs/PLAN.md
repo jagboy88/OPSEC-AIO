@@ -305,7 +305,7 @@ IDs for drops/notes: 128-bit random, base64url (22 chars). Never sequential.
 
 - Simplest module; proves the whole zero-knowledge pipeline end-to-end (fragment keys, atomic delete, headers, rate limits).
 
-**Phase 2 — Drop (weeks 3–4)**
+**Phase 2 — Drop (weeks 3–4)** ✅ done (see §12 items 16–23)
 
 - Chunked secretstream encryption, resumable upload, streaming download, 24h deletion worker + sweeper, deletion tokens, download limits, optional password.
 
@@ -370,3 +370,11 @@ Changes made while building, with the reason. Update this list whenever the code
 13. **Notes render as plain text.** Markdown rendering is deferred: it needs a sanitiser, and plain text has no XSS surface. "Notify me when read" is deferred to Phase 3 (it needs a chat account).
 14. **Argon2id runs on the main thread** (about 1 s pause when a password is used). Move it to a Web Worker in Phase 4.
 15. **CI build fix.** Phase 0's root `pnpm build` used unquoted globs that the shell expanded, so it silently built nothing; it is now `pnpm -r run build`.
+16. **Drop file format.** `header_blob = seal(L, inner)`. `inner` holds a version, flags, a 98-byte password slot (random bytes when there is no password, so the blob size doesn't reveal password use), the secretstream header, and the name/type/exact size encrypted under the content key and padded to 256 bytes. The file is padded with PADMÉ (minimum 4 KiB) before chunking, so the server learns only the chunk count, a coarse size bucket. With a password, even the file name needs the password. Pinned vectors are in `packages/crypto/test/fixtures/drop-vectors.json`.
+17. **Drop API differs from §5.** `init` takes no `size` (the server learns the ciphertext size from the chunks at finalize). Downloads go `POST /drop/:id/download`, which returns a download token, then `GET /drop/:id/chunk/:n` with `Authorization: Bearer <token>`; chunks are only served to a live token, so download limits can't be bypassed. `DELETE` also accepts the `upload_token`, to abort an unfinished upload. `meta` returns `downloads_remaining`.
+18. **No BullMQ.** A sweeper runs every minute instead. Reads refuse expired drops at the exact deadline, and files are deleted within about a minute. Redis has persistence disabled, so queued jobs would be lost on restart anyway; the database is the source of truth.
+19. **Download limits delete immediately.** When the last allowed download finishes (its final chunk is served), the drop's row and files are deleted at once, not at expiry.
+20. **Storage cap.** `DROP_STORAGE_MAX_BYTES` (default 20 GiB) reserves worst-case space per live drop. New uploads beyond it get `507 storage_full`, so the disk can't be filled.
+21. **Saving large downloads.** Above 256 MiB, desktop Chromium streams straight to disk (File System Access API). Other browsers hold the file in memory, and the page warns above 512 MiB. A same-origin service-worker stream (for Android and Firefox) is a Phase 4 item; iOS Safari stays memory-bound.
+22. **No byte-overwrite on delete.** Overwriting is unreliable on SSDs and costly at 2 GB; deletion relies on the server never having held the key (§3.3).
+23. **`randomBytes` uses `crypto.getRandomValues` directly.** libsodium's WASM wrapper took about 2.6 s per MiB; the platform CSPRNG is the same source libsodium uses in the browser.

@@ -17,6 +17,17 @@ export const DROP_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 export const DROP_MAX_TTL_SECONDS = 24 * HOUR;
 export const DROP_EXPIRY_OPTIONS_SECONDS = [1 * HOUR, 6 * HOUR, 12 * HOUR, 24 * HOUR] as const;
 export const DROP_DEFAULT_TTL_SECONDS = 24 * HOUR;
+/** Plaintext bytes per chunk; matches STREAM_CHUNK_SIZE in @opsec-aio/crypto. */
+export const DROP_CHUNK_BYTES = 1024 * 1024;
+/** secretstream overhead per chunk. */
+export const DROP_CHUNK_OVERHEAD = 17;
+export const DROP_MAX_CHUNKS = DROP_MAX_BYTES / DROP_CHUNK_BYTES;
+export const DROP_HEADER_BLOB_MAX_BYTES = 4096;
+/** Download limit choices offered to uploaders; null = unlimited within the TTL. */
+export const DROP_MAX_DOWNLOAD_OPTIONS = [1, 2, 3, 5, 10, null] as const;
+export const DROP_MAX_DOWNLOADS_LIMIT = 100;
+/** A started download may take this long to fetch all chunks (never beyond the drop's expiry). */
+export const DROP_DOWNLOAD_WINDOW_SECONDS = 6 * HOUR;
 /** Anonymous uploads allowed (decision #4). */
 export const DROP_ANONYMOUS_UPLOADS = true;
 
@@ -64,4 +75,7 @@ export const RATE_LIMITS = {
   noteCreate: { max: 60, windowSeconds: HOUR },
   noteOpen: { max: 60, windowSeconds: MINUTE },
   noteDelete: { max: 30, windowSeconds: MINUTE },
+  dropMeta: { max: 60, windowSeconds: MINUTE },
+  dropDownload: { max: 30, windowSeconds: MINUTE },
+  dropDelete: { max: 30, windowSeconds: MINUTE },
 } as const;

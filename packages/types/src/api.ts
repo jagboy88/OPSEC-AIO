@@ -18,7 +18,13 @@ export interface ReadyResponse {
 
 /** Every error response has this shape. Messages are deliberately generic. */
 export interface ErrorResponse {
-  error: 'bad_request' | 'not_found' | 'rate_limited' | 'payload_too_large' | 'internal';
+  error:
+    | 'bad_request'
+    | 'not_found'
+    | 'rate_limited'
+    | 'payload_too_large'
+    | 'storage_full'
+    | 'internal';
 }
 
 // ── Burn ────────────────────────────────────────────────────────────────────
@@ -41,12 +47,14 @@ export interface DeleteWithTokenRequest {
 }
 
 // ── Drop ────────────────────────────────────────────────────────────────────
+// Upload:   init → PUT each chunk (Bearer upload_token) → finalize
+// Download: meta → POST download (gets download_token) → GET each chunk (Bearer download_token)
 export interface InitDropRequest {
-  size: number;
   chunk_count: number;
   expires_in: number;
-  max_downloads?: number;
-  /** Stream header + encrypted filename/MIME metadata. */
+  /** null or absent = unlimited within the expiry. */
+  max_downloads?: number | null;
+  /** Opaque, client-encrypted (file name, type, size, stream header). */
   header_blob: B64;
 }
 export interface InitDropResponse {
@@ -56,12 +64,22 @@ export interface InitDropResponse {
 }
 export interface FinalizeDropResponse {
   deletion_token: string;
+  expires_at: string;
 }
 export interface DropMetaResponse {
-  size: number;
   chunk_count: number;
   expires_at: string;
   header_blob: B64;
+  downloads_remaining: number | null;
+}
+export interface StartDownloadResponse {
+  download_token: string;
+  downloads_remaining: number | null;
+}
+/** Either token works: deletion_token after finalize, upload_token to abort an upload. */
+export interface DeleteDropRequest {
+  deletion_token?: string;
+  upload_token?: string;
 }
 
 // ── Auth / keys (Phase 3) ───────────────────────────────────────────────────

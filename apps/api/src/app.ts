@@ -1,10 +1,12 @@
 import Fastify, { LogController, type FastifyError, type FastifyInstance } from 'fastify';
 import { API_PREFIX, type ErrorResponse } from '@opsec-aio/types';
 import type { Redis } from 'ioredis';
+import type { BlobStore } from './blobs.js';
 import type { Config } from './config.js';
 import type { Pool } from './db.js';
 import { registerRateLimit } from './ratelimit.js';
 import { healthRoutes, type Probe } from './routes/health.js';
+import { dropRoutes } from './routes/drops.js';
 import { noteRoutes } from './routes/notes.js';
 
 export interface AppDeps {
@@ -20,8 +22,14 @@ export interface AppDeps {
     tokenPepper: Uint8Array;
     /** Rate-limit store; in-process memory when absent. */
     redis?: Redis;
+    /** Drop storage; Drop routes are only registered when present. */
+    blobs?: BlobStore;
+    dropStorageMaxBytes?: number;
   };
 }
+
+/** Default cap on reserved Drop storage: 20 GiB. Override with DROP_STORAGE_MAX_BYTES. */
+export const DEFAULT_DROP_STORAGE_MAX_BYTES = 20 * 1024 ** 3;
 
 /** Default JSON body limit; endpoints that accept more opt in explicitly. */
 const DEFAULT_BODY_LIMIT = 16 * 1024;
@@ -30,6 +38,7 @@ function errorCode(status: number): ErrorResponse['error'] {
   if (status === 404) return 'not_found';
   if (status === 413) return 'payload_too_large';
   if (status === 429) return 'rate_limited';
+  if (status === 507) return 'storage_full';
   if (status >= 400 && status < 500) return 'bad_request';
   return 'internal';
 }
@@ -69,7 +78,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.setErrorHandler((err: FastifyError, req, reply) => {
     const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
-    if (status >= 500) req.log.error({ err }, 'request failed');
+    if (status >= 500 && status !== 507) req.log.error({ err }, 'request failed');
     const body: ErrorResponse = { error: errorCode(status) };
     return reply.code(status).send(body);
   });
@@ -86,6 +95,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const { pool, tokenPepper, redis } = deps.data;
     await registerRateLimit(app, { pepper: tokenPepper, ...(redis ? { redis } : {}) });
     await app.register(noteRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
+    if (deps.data.blobs) {
+      await app.register(dropRoutes, {
+        prefix: API_PREFIX,
+        pool,
+        pepper: tokenPepper,
+        blobs: deps.data.blobs,
+        storageMaxBytes: deps.data.dropStorageMaxBytes ?? DEFAULT_DROP_STORAGE_MAX_BYTES,
+      });
+    }
   }
 
   return app;

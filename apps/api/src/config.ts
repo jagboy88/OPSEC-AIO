@@ -15,6 +15,8 @@ export interface Config {
    * backups, on a LUKS-encrypted host disk). Empty = storage disabled.
    */
   blobDir: string;
+  /** Cap on reserved Drop ciphertext across live drops. */
+  dropStorageMaxBytes: number;
   /** Server-side pepper for hashing deletion/upload/session tokens (≥ 32 bytes). */
   tokenPepper: Uint8Array;
   migrateOnStart: boolean;
@@ -64,6 +66,11 @@ export function loadConfig(env: Env = process.env): Config {
   const hops = Number(read(env, 'TRUST_PROXY_HOPS') ?? '0');
   if (!Number.isInteger(hops) || hops < 0 || hops > 5) throw new Error('invalid TRUST_PROXY_HOPS');
 
+  const dropStorageMaxBytes = Number(read(env, 'DROP_STORAGE_MAX_BYTES') ?? 20 * 1024 ** 3);
+  if (!Number.isSafeInteger(dropStorageMaxBytes) || dropStorageMaxBytes < 0) {
+    throw new Error('invalid DROP_STORAGE_MAX_BYTES');
+  }
+
   let tokenPepper: Uint8Array;
   try {
     tokenPepper = fromBase64Url(required(env, 'TOKEN_PEPPER'));
@@ -86,6 +93,7 @@ export function loadConfig(env: Env = process.env): Config {
     ),
     redisUrl: withPassword(required(env, 'REDIS_URL'), read(env, 'REDIS_PASSWORD'), 'REDIS_URL'),
     blobDir: read(env, 'BLOB_DIR') ?? '',
+    dropStorageMaxBytes,
     tokenPepper,
     migrateOnStart: (read(env, 'MIGRATE_ON_START') ?? 'true') === 'true',
   };

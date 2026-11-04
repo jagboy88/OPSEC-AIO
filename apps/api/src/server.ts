@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import { Redis } from 'ioredis';
 import { ready as cryptoReady } from '@opsec-aio/crypto';
 import { buildApp } from './app.js';
+import { DiskBlobStore } from './blobs.js';
 import { loadConfig } from './config.js';
 import { MIGRATIONS_DIR, createPool, migrate } from './db.js';
 import { startSweeper } from './sweeper.js';
@@ -16,6 +17,8 @@ async function main(): Promise<void> {
   redis.on('error', () => {
     /* surfaced via /ready; avoid log spam that could include hostnames */
   });
+
+  const blobs = config.blobDir ? new DiskBlobStore(config.blobDir) : undefined;
 
   const probes: Record<string, () => Promise<void>> = {
     database: async () => {
@@ -33,7 +36,12 @@ async function main(): Promise<void> {
   const app = await buildApp({
     config,
     probes,
-    data: { pool, tokenPepper: config.tokenPepper, redis },
+    data: {
+      pool,
+      tokenPepper: config.tokenPepper,
+      redis,
+      ...(blobs ? { blobs, dropStorageMaxBytes: config.dropStorageMaxBytes } : {}),
+    },
   });
 
   if (config.migrateOnStart) {
@@ -41,7 +49,7 @@ async function main(): Promise<void> {
     if (applied.length) app.log.info({ applied }, 'migrations applied');
   }
 
-  const stopSweeper = startSweeper(pool, app.log);
+  const stopSweeper = startSweeper(pool, app.log, blobs);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');

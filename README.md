@@ -12,15 +12,15 @@ The full specification and the decisions behind it are in [`docs/PLAN.md`](docs/
 | ----- | ---------------------------------------------------------------------------------- | ------- |
 | 0     | Monorepo, crypto library + known-answer tests, API/web skeletons, Docker stack, CI | ✅ Done |
 | 1     | Burn (notes): API, crypto format, UI, end-to-end tests                             | ✅ Done |
-| 2     | Drop (files)                                                                       | Next    |
-| 3     | Chat                                                                               | —       |
+| 2     | Drop (files): chunked encrypted upload, 24 h hard delete, download limits          | ✅ Done |
+| 3     | Chat                                                                               | Next    |
 | 4     | Hardening & launch                                                                 | —       |
 
 ## Repository layout
 
 ```
 apps/api          Fastify API (TypeScript): health/readiness, migrations, privacy-preserving logging
-apps/web          SvelteKit static SPA: Burn (/burn, /n/<id>), crypto self-test (/selftest)
+apps/web          SvelteKit static SPA: Drop (/drop, /d/<id>), Burn (/burn, /n/<id>), self-test
 packages/crypto   All client-side crypto: versioned AEAD envelopes, file streams, Argon2id, Ed25519, X25519
 packages/types    Shared API contracts and product limits (the §10 decisions, in code)
 infra/caddy       Edge: TLS 1.3 only, security headers, generated CSP

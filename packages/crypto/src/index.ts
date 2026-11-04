@@ -70,4 +70,20 @@ export {
   type EncryptedNote,
   type OpenedNote,
 } from './note.js';
+export {
+  DROP_META_PADDING_BLOCK,
+  DROP_NAME_MAX_LENGTH,
+  createDrop,
+  dropChunkBounds,
+  dropLayout,
+  openDropHeader,
+  padChunk,
+  padme,
+  type CreateDropOptions,
+  type DropHeader,
+  type DropLayout,
+  type DropMeta,
+  type NewDrop,
+  type OpenedDrop,
+} from './drop.js';
 export { runSelfTest, type SelfTestResult } from './selftest.js';

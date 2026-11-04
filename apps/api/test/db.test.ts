@@ -19,7 +19,11 @@ describe.skipIf(!url)('migrations (postgres)', () => {
   afterAll(() => pool?.end());
 
   it('applies cleanly and is idempotent', async () => {
-    expect(await migrate(pool, MIGRATIONS_DIR)).toEqual(['001_init.sql', '002_note_size.sql']);
+    expect(await migrate(pool, MIGRATIONS_DIR)).toEqual([
+      '001_init.sql',
+      '002_note_size.sql',
+      '003_drops.sql',
+    ]);
     expect(await migrate(pool, MIGRATIONS_DIR)).toEqual([]);
   });
 

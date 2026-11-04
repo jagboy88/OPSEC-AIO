@@ -1,0 +1,160 @@
+# OpSec AIO — single-VPS deployment. See docs/DEPLOY.md.
+# First run:  ./scripts/init-secrets.sh && cp .env.example .env && docker compose up -d --build
+
+name: opsec-aio
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: 5m
+      max-file: '2'
+
+services:
+  caddy:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: infra/caddy/Dockerfile
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+      - '${HTTPS_PORT:-443}:443/udp'
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp
+    networks:
+      - edge
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    read_only: true
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      PORT: '3000'
+      TRUST_PROXY_HOPS: '1'
+      DATABASE_URL: postgres://opsec@postgres:5432/opsec
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      TOKEN_PEPPER_FILE: /run/secrets/token_pepper
+      BLOB_DIR: /data/blobs
+    secrets:
+      - postgres_password
+      - redis_password
+      - token_pepper
+    volumes:
+      # Encrypted Drop blobs. NEVER include this volume in backups.
+      - blobs:/data/blobs
+    tmpfs:
+      - /tmp
+    networks:
+      - edge
+      - backend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/v1/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    <<: *hardening
+    image: postgres:16.15-alpine
+    # The entrypoint needs these to initialise the data dir, then drops to the postgres user.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    read_only: true
+    environment:
+      POSTGRES_USER: opsec
+      POSTGRES_DB: opsec
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    networks:
+      - backend
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U opsec -d opsec']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    <<: *hardening
+    image: redis:7.4.12-alpine
+    user: redis
+    read_only: true
+    # Persistence disabled: sessions, rate limits and job queues live in memory
+    # only. Expiry is also enforced by the database sweeper, so a restart loses
+    # nothing important.
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$(cat /run/secrets/redis_password)" --save "" --appendonly no --protected-mode yes
+    secrets:
+      - redis_password
+    tmpfs:
+      - /data
+    networks:
+      - backend
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  edge: {}
+  # No route to the internet: Postgres and Redis are reachable only by the API.
+  backend:
+    internal: true
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  pgdata: {}
+  blobs: {}
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  redis_password:
+    file: ./secrets/redis_password
+  token_pepper:
+    file: ./secrets/token_pepper

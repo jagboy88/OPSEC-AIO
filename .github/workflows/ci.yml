@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck, test, audit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      # Actions pinned to commit SHAs (supply-chain hygiene).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres
+      - name: Dependency audit (production deps)
+        run: pnpm audit --prod --audit-level moderate
+      - name: Publish build hash
+        run: |
+          echo "### Web build hash" >> "$GITHUB_STEP_SUMMARY"
+          node -e "console.log('\`' + require('./apps/web/build-meta/build-manifest.json').buildHash + '\`')" >> "$GITHUB_STEP_SUMMARY"
+
+  docker:
+    name: Docker images & stack smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: ./scripts/init-secrets.sh
+      - run: docker compose config -q
+      - run: docker compose build
+      - run: docker compose up -d --wait --wait-timeout 120
+      - name: Readiness through Caddy
+        run: |
+          curl -fsSk https://localhost/api/v1/ready | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -fsSk -D - -o /dev/null https://localhost/ | grep -qi "content-security-policy: default-src 'none'"
+          # TLS 1.2 must be refused.
+          ! curl -sk --tls-max 1.2 -o /dev/null https://localhost/
+      - if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down -v

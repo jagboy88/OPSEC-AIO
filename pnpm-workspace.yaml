@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Block install scripts by default; only allow what we have reviewed.
+onlyBuiltDependencies:
+  - esbuild

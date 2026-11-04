@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/build
+**/build-meta
+**/.svelte-kit
+**/coverage
+.git
+.github
+secrets
+.env
+*.log

@@ -1,0 +1,29 @@
+{
+  "name": "@opsec-aio/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch --conditions source src/server.ts",
+    "start": "node dist/server.js",
+    "migrate": "node dist/migrate-cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opsec-aio/crypto": "workspace:*",
+    "@opsec-aio/types": "workspace:*",
+    "fastify": "^5.12.8",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15"
+  }
+}

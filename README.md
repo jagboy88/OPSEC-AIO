@@ -13,15 +13,16 @@ The full specification and the decisions behind it are in [`docs/PLAN.md`](docs/
 | 0     | Monorepo, crypto library + known-answer tests, API/web skeletons, Docker stack, CI | ✅ Done |
 | 1     | Burn (notes): API, crypto format, UI, end-to-end tests                             | ✅ Done |
 | 2     | Drop (files): chunked encrypted upload, 24 h hard delete, download limits          | ✅ Done |
-| 3     | Chat                                                                               | Next    |
-| 4     | Hardening & launch                                                                 | —       |
+| 3     | Chat: Signal Protocol 1:1 + groups, disappearing messages, safety numbers          | ✅ Done |
+| 4     | Hardening & launch                                                                 | Next    |
 
 ## Repository layout
 
 ```
 apps/api          Fastify API (TypeScript): health/readiness, migrations, privacy-preserving logging
-apps/web          SvelteKit static SPA: Drop (/drop, /d/<id>), Burn (/burn, /n/<id>), self-test
+apps/web          SvelteKit static SPA: Chat (/chat), Drop (/drop, /d/<id>), Burn (/burn, /n/<id>)
 packages/crypto   All client-side crypto: versioned AEAD envelopes, file streams, Argon2id, Ed25519, X25519
+packages/chat     Chat client core: Signal sessions, encrypted vault, disappearing messages, groups
 packages/types    Shared API contracts and product limits (the §10 decisions, in code)
 infra/caddy       Edge: TLS 1.3 only, security headers, generated CSP
 e2e/              Playwright tests against the running Docker stack
@@ -91,5 +92,9 @@ nothing readable to hand over.
 
 ## License
 
-No license has been chosen yet, so all rights are reserved. A license (AGPL-3.0 is the
-recommendation) will be picked before the repository is made public.
+[AGPL-3.0](LICENSE). If you run a modified version as a service, you must offer
+your users its source code (the site footer links to it).
+
+Chat uses `@privacyresearch/libsignal-protocol-typescript` (GPL-3.0), a community
+TypeScript port of Signal's original JavaScript library, which is compatible with
+AGPL-3.0.

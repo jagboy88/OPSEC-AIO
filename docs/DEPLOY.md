@@ -43,7 +43,19 @@ at the VPS before the first start.
 Simplest safe policy: **don't back up the database at all.** The service is designed to hold
 nothing worth keeping.
 
-## 4. Logging
+## 4. Rate limits
+
+Per-client limits (plan §5) apply as written when `RATE_LIMIT_MULTIPLIER` is 1, the default.
+Never raise it in production: it exists so test stacks can create many accounts from
+one IP.
+
+## 5. Open source obligation (AGPL-3.0)
+
+The code is AGPL-3.0. Before anyone else uses your deployment, make the repository
+public (or point the footer's "Source code" link at a public copy of exactly what you
+run).
+
+## 6. Logging
 
 - Caddy writes **no access logs**, only its own errors.
 - The API logs no request lines, IPs, URLs or user agents. It logs only lifecycle events and
@@ -51,7 +63,7 @@ nothing worth keeping.
 - Docker's `local` log driver is capped at 2 × 5 MB per container. For a 24-hour retention
   ceiling, also run `docker compose logs` rotation or a nightly `docker compose restart`.
 
-## 5. Updating
+## 7. Updating
 
 ```sh
 git pull
@@ -60,7 +72,7 @@ docker compose up -d --build
 
 Migrations run automatically on API start, guarded by a Postgres advisory lock.
 
-## 6. Verifying the served web app
+## 8. Verifying the served web app
 
 Each build writes `build-meta/build-manifest.json` (baked into the Caddy image at
 `/etc/caddy/build-manifest.json`), which contains a `buildHash` over every served file. CI
@@ -71,7 +83,7 @@ from the tagged source and compare.
 docker compose exec caddy cat /etc/caddy/build-manifest.json | head -3
 ```
 
-## 7. Tor onion service (Phase 4)
+## 9. Tor onion service (Phase 4)
 
 Planned: a `tor` container that publishes the Caddy service as a v3 onion address, with an
 `Onion-Location` header on clearnet responses.

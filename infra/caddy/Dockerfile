@@ -8,12 +8,14 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
 COPY packages/crypto/package.json packages/crypto/
 COPY packages/types/package.json packages/types/
+COPY packages/chat/package.json packages/chat/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY e2e/package.json e2e/
 RUN pnpm install --frozen-lockfile --filter "@opsec-aio/web..."
 COPY packages/crypto packages/crypto
 COPY packages/types packages/types
+COPY packages/chat packages/chat
 COPY apps/web apps/web
 RUN pnpm --filter @opsec-aio/web run build
 

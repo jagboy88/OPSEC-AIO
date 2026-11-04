@@ -7,9 +7,9 @@
       name: 'Chat',
       blurb: 'End-to-end encrypted 1:1 and small-group chat with disappearing messages.',
       detail: 'Signal Protocol · account required',
-      status: 'Phase 3',
-      href: null,
-      cta: '',
+      status: null,
+      href: resolve('/chat'),
+      cta: 'Open chat →',
     },
     {
       name: 'Drop',

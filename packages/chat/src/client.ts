@@ -1,5 +1,4 @@
 import {
-  FingerprintGenerator,
   KeyHelper,
   SessionBuilder,
   SessionCipher,
@@ -25,6 +24,7 @@ import {
   type PreKeyUpload,
 } from '@opsec-aio/types';
 import { abToB64, b64ToAB, binToBytes, bytesToBin, toAB } from './bytes.js';
+import { safetyNumber } from './fingerprint.js';
 import type { EncryptedKV } from './kv.js';
 import { decodePayload, encodePayload, type FileRef, type Payload } from './payload.js';
 import { ChatServerError, type ChatServer } from './server.js';
@@ -845,11 +845,12 @@ export class ChatClient {
   async safetyNumber(username: string): Promise<string | null> {
     const rec = await this.store.getIdentity(username);
     if (!rec) return null;
-    return new FingerprintGenerator(FINGERPRINT_ITERATIONS).createFor(
+    return safetyNumber(
       this.username,
-      b64ToAB(this.account.identityPub),
+      fromBase64Url(this.account.identityPub),
       username,
-      b64ToAB(rec.key),
+      fromBase64Url(rec.key),
+      FINGERPRINT_ITERATIONS,
     );
   }
 

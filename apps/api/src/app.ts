@@ -5,6 +5,7 @@ import type { Redis } from 'ioredis';
 import type { BlobStore } from './blobs.js';
 import type { Config } from './config.js';
 import type { Pool } from './db.js';
+import { setRateLimitMultiplier } from './http.js';
 import { MemoryNotifier, type Notifier } from './notifier.js';
 import { registerRateLimit } from './ratelimit.js';
 import { healthRoutes, type Probe } from './routes/health.js';
@@ -15,7 +16,8 @@ import { messageRoutes } from './routes/messages.js';
 import { noteRoutes } from './routes/notes.js';
 
 export interface AppDeps {
-  config: Pick<Config, 'logLevel' | 'trustProxyHops'>;
+  config: Pick<Config, 'logLevel' | 'trustProxyHops'> &
+    Partial<Pick<Config, 'rateLimitMultiplier'>>;
   /** Named readiness checks (database, redis, storage…). */
   probes: Record<string, Probe>;
   /**
@@ -53,6 +55,7 @@ function errorCode(status: number): ErrorResponse['error'] {
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
+  setRateLimitMultiplier(deps.config.rateLimitMultiplier ?? 1);
   const app = Fastify({
     // Privacy-preserving logging (plan §7): no request lines, no IPs, no URLs,
     // no user agents. Only errors and lifecycle events are logged.

@@ -1,6 +1,7 @@
 {
   "name": "@opsec-aio/web",
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +13,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@opsec-aio/chat": "workspace:*",
     "@opsec-aio/crypto": "workspace:*",
     "@opsec-aio/types": "workspace:*",
     "uqr": "^0.1.3"

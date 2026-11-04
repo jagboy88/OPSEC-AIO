@@ -19,6 +19,7 @@ import {
   type OpenNoteResponse,
 } from '@opsec-aio/types';
 import type { Pool } from '../db.js';
+import { rl } from '../http.js';
 
 export interface NoteRouteOptions {
   pool: Pool;
@@ -41,10 +42,6 @@ function badRequest(): Error {
 function notFound(): Error {
   return Object.assign(new Error('not found'), { statusCode: 404 });
 }
-
-const rl = (r: { max: number; windowSeconds: number }) => ({
-  rateLimit: { max: r.max, timeWindow: r.windowSeconds * 1000 },
-});
 
 /**
  * Burn API (docs/PLAN.md §4.3, §5). The server stores an opaque ciphertext and

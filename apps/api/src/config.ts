@@ -20,6 +20,8 @@ export interface Config {
   /** Server-side pepper for hashing deletion/upload/session tokens (≥ 32 bytes). */
   tokenPepper: Uint8Array;
   migrateOnStart: boolean;
+  /** Scales all per-client rate limits; 1 in production. */
+  rateLimitMultiplier: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -71,6 +73,15 @@ export function loadConfig(env: Env = process.env): Config {
     throw new Error('invalid DROP_STORAGE_MAX_BYTES');
   }
 
+  const rateLimitMultiplier = Number(read(env, 'RATE_LIMIT_MULTIPLIER') ?? '1');
+  if (
+    !Number.isInteger(rateLimitMultiplier) ||
+    rateLimitMultiplier < 1 ||
+    rateLimitMultiplier > 1000
+  ) {
+    throw new Error('invalid RATE_LIMIT_MULTIPLIER');
+  }
+
   let tokenPepper: Uint8Array;
   try {
     tokenPepper = fromBase64Url(required(env, 'TOKEN_PEPPER'));
@@ -96,5 +107,6 @@ export function loadConfig(env: Env = process.env): Config {
     dropStorageMaxBytes,
     tokenPepper,
     migrateOnStart: (read(env, 'MIGRATE_ON_START') ?? 'true') === 'true',
+    rateLimitMultiplier,
   };
 }

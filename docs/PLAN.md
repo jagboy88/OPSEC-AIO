@@ -309,7 +309,7 @@ IDs for drops/notes: 128-bit random, base64url (22 chars). Never sequential.
 
 - Chunked secretstream encryption, resumable upload, streaming download, 24h deletion worker + sweeper, deletion tokens, download limits, optional password.
 
-**Phase 3 — Chat (weeks 5–8)**
+**Phase 3 — Chat (weeks 5–8)** ✅ done (see §12 items 24–34)
 
 - Accounts + challenge-response auth, prekey bundles, libsignal integration, WebSocket relay, local encrypted store, disappearing messages, safety numbers, attachments via Drop, small groups via pairwise fan-out.
 
@@ -325,17 +325,17 @@ IDs for drops/notes: 128-bit random, base64url (22 chars). Never sequential.
 
 ## 10. Decisions (resolved 2026-11-04)
 
-| #   | Question                          | Decision                                                                                                           |
-| --- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1   | Frontend framework                | **SvelteKit** (static SPA, `ssr = false`)                                                                          |
-| 2   | Backend                           | **Node 22 + Fastify**                                                                                              |
-| 3   | Primary cipher in UI              | **XChaCha20-Poly1305**. AES-256-GCM is implemented and tested in `packages/crypto` but not offered as a UI choice. |
-| 4   | Max Drop size / anonymous uploads | **2 GB**, anonymous uploads **allowed** (abuse controlled by rate limits)                                          |
-| 5   | Burn views / TTL                  | Default **1** view, max **5**; default expiry **7 days**, max **30 days**                                          |
-| 6   | Anonymous chat accounts           | **Yes**: users can pick a username or get a generated one                                                          |
-| 7   | Hosting / Tor                     | **Single VPS**, provider chosen before Phase 4; Tor onion service in Phase 4                                       |
-| 8   | License                           | **None yet** (all rights reserved). Decide before the repo is made public; AGPL-3.0 remains the recommendation.    |
-| 9   | Disappearing messages             | Default **off**; in groups **any member** may change it                                                            |
+| #   | Question                          | Decision                                                                                                                                                |
+| --- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Frontend framework                | **SvelteKit** (static SPA, `ssr = false`)                                                                                                               |
+| 2   | Backend                           | **Node 22 + Fastify**                                                                                                                                   |
+| 3   | Primary cipher in UI              | **XChaCha20-Poly1305**. AES-256-GCM is implemented and tested in `packages/crypto` but not offered as a UI choice.                                      |
+| 4   | Max Drop size / anonymous uploads | **2 GB**, anonymous uploads **allowed** (abuse controlled by rate limits)                                                                               |
+| 5   | Burn views / TTL                  | Default **1** view, max **5**; default expiry **7 days**, max **30 days**                                                                               |
+| 6   | Anonymous chat accounts           | **Yes**: users can pick a username or get a generated one                                                                                               |
+| 7   | Hosting / Tor                     | **Single VPS**, provider chosen before Phase 4; Tor onion service in Phase 4                                                                            |
+| 8   | License                           | **AGPL-3.0** (decided 2026-11-04, Phase 3): the only browser-capable Signal Protocol implementations are GPL, so the client must be open source anyway. |
+| 9   | Disappearing messages             | Default **off**; in groups **any member** may change it                                                                                                 |
 
 These values live in code in `packages/types/src/limits.ts` and are enforced by both the API and database constraints.
 
@@ -378,3 +378,14 @@ Changes made while building, with the reason. Update this list whenever the code
 21. **Saving large downloads.** Above 256 MiB, desktop Chromium streams straight to disk (File System Access API). Other browsers hold the file in memory, and the page warns above 512 MiB. A same-origin service-worker stream (for Android and Firefox) is a Phase 4 item; iOS Safari stays memory-bound.
 22. **No byte-overwrite on delete.** Overwriting is unreliable on SSDs and costly at 2 GB; deletion relies on the server never having held the key (§3.3).
 23. **`randomBytes` uses `crypto.getRandomValues` directly.** libsodium's WASM wrapper took about 2.6 s per MiB; the platform CSPRNG is the same source libsodium uses in the browser.
+24. **Signal library.** The official `@signalapp/libsignal-client` ships only native Node binaries (no browser/WASM build). Chat uses `@privacyresearch/libsignal-protocol-typescript` 0.0.16 (pinned): a GPL-3.0 TypeScript port of Signal's archived `libsignal-protocol-javascript`. It does X3DH + Double Ratchet but **no PQXDH**: post-quantum protection waits for a browser build of libsignal. Review items for Phase 4: (a) in `processV3` the library calls `isTrustedIdentity` without `await`, so its receive-side check never blocks; our store handles key changes itself; (b) it bundles Microsoft's `msrcrypto` polyfill, which seeds an internal pool with `Math.random`. That polyfill is only used when WebCrypto is missing, plus for the library's own fingerprint hashing, which we replaced.
+25. **Separate login key** (see item 2). Login is Ed25519 over `authChallengeMessage(username, nonce)`: a context label, the username and a single-use 32-byte nonce valid for 2 minutes. Sessions last 24 h and are stored as keyed hashes; the client silently re-authenticates.
+26. **Single device, device id 1.** Multi-device stays out of scope. "Move account" exports the still-encrypted keystore (as the plan allowed); using it on two devices at once breaks sessions, and the UI says so.
+27. **Local store.** IndexedDB holds only the Argon2id-wrapped master key and sealed records. Record names are BLAKE2b-keyed hashes, so contact usernames aren't visible on disk.
+28. **Identity policy.** Trust on first use. A changed key is accepted with a "safety number changed" banner and notice. Sending to a _verified_ contact whose key changed is refused until the user accepts the new key, which also clears "verified". "Reset secure session" recovers from a contact reinstalling.
+29. **Disappearing timers.** Each message carries the sender's timer. Recipients' timers start when read; unread messages are deleted at 2 × timer after arrival; read messages get the full timer from the moment of reading. The sender's copy starts at send. Remaining time is shown on every message rather than on long-press.
+30. **Groups.** Pairwise fan-out up to 20 members; the server sees N separate 1:1 messages and nothing about groups. Membership lives in encrypted control messages, and group payloads from non-members are ignored. Any member can change the timer (decision #9). Adding or removing others after creation is not built yet; members can leave.
+31. **Attachments** are Drops (24 h, unlimited downloads within that window). The link key travels only inside the E2EE message and disappears with it.
+32. **Safety numbers** are Signal's numeric v0 fingerprint (60 digits plus a QR code), computed with libsodium SHA-512, which is byte-identical to the library and far faster (tested).
+33. **Typing indicators and read receipts** aren't implemented (they were to be off by default anyway). **Sealed sender** is still v1.1: the relay sees sender, recipient, time and size.
+34. **`RATE_LIMIT_MULTIPLIER`** (default 1) scales every per-client limit, so test stacks (CI uses 100) can create many accounts from one IP. Production must leave it at 1.

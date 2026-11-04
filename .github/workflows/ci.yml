@@ -62,6 +62,9 @@ jobs:
       - run: docker compose config -q
       - run: docker compose build
       - run: docker compose up -d --wait --wait-timeout 120
+        env:
+          # e2e creates many accounts/notes/drops from one IP.
+          RATE_LIMIT_MULTIPLIER: '100'
       - name: Readiness through Caddy
         run: |
           curl -fsSk https://localhost/api/v1/ready | tee /dev/stderr | grep -q '"status":"ok"'

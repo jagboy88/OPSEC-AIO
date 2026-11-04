@@ -1,6 +1,7 @@
 {
   "name": "@opsec-aio/chat",
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "End-to-end encrypted chat client core: Signal Protocol sessions, encrypted local store, disappearing messages, groups.",

@@ -59,6 +59,8 @@ services:
       TOKEN_PEPPER_FILE: /run/secrets/token_pepper
       BLOB_DIR: /data/blobs
       DROP_STORAGE_MAX_BYTES: ${DROP_STORAGE_MAX_BYTES:-21474836480}
+      # Leave at 1 in production. Test stacks raise it (CI sets 100).
+      RATE_LIMIT_MULTIPLIER: ${RATE_LIMIT_MULTIPLIER:-1}
     secrets:
       - postgres_password
       - redis_password

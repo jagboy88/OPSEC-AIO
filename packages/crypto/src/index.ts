@@ -53,7 +53,7 @@ export {
   type SigningKeyPair,
 } from './sign.js';
 export { generateKxKeyPair, kxPublicKey, x25519, type KxKeyPair } from './kx.js';
-export { blake2b, constantTimeEqual, hashToken, sha256, wipe } from './hash.js';
+export { blake2b, constantTimeEqual, hashToken, sha256, sha512, wipe } from './hash.js';
 export {
   buildShareLink,
   keyFromFragment,

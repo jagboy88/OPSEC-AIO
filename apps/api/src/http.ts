@@ -3,9 +3,20 @@ import { fromBase64Url } from '@opsec-aio/crypto';
 export const httpError = (statusCode: number) =>
   Object.assign(new Error(String(statusCode)), { statusCode });
 
+let rateLimitMultiplier = 1;
+
+/**
+ * Scale every per-client limit (RATE_LIMIT_MULTIPLIER). Production uses 1, the
+ * limits from docs/PLAN.md §5; test stacks raise it so suites that create many
+ * accounts from one IP don't trip them. Must be set before routes register.
+ */
+export function setRateLimitMultiplier(n: number): void {
+  rateLimitMultiplier = n;
+}
+
 /** Route config enabling a per-client rate limit. */
 export const rl = (r: { max: number; windowSeconds: number }) => ({
-  rateLimit: { max: r.max, timeWindow: r.windowSeconds * 1000 },
+  rateLimit: { max: r.max * rateLimitMultiplier, timeWindow: r.windowSeconds * 1000 },
 });
 
 /** Unpadded base64url length for n bytes. */

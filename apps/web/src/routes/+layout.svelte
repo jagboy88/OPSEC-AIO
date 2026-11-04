@@ -27,6 +27,7 @@
       OpSec AIO
     </a>
     <nav aria-label="Primary" class="flex gap-5 text-sm text-neutral-400">
+      <a href={resolve('/chat')} class="hover:text-neutral-100">Chat</a>
       <a href={resolve('/drop')} class="hover:text-neutral-100">Drop</a>
       <a href={resolve('/burn')} class="hover:text-neutral-100">Burn</a>
       <a href={resolve('/selftest')} class="hover:text-neutral-100">Self-test</a>
@@ -40,5 +41,11 @@
   <footer class="border-t border-neutral-800 py-6 text-xs text-neutral-500">
     Everything is encrypted in your browser. The server stores ciphertext it cannot read. No
     analytics, no third-party requests.
+    <!-- AGPL-3.0 §13: users interacting over a network must be offered the source. -->
+    <a
+      href="https://github.com/jagboy88/OPSEC-AIO"
+      rel="noopener noreferrer"
+      class="ml-1 underline hover:text-neutral-300">Source code (AGPL-3.0)</a
+    >
   </footer>
 </div>

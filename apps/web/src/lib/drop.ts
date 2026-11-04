@@ -2,7 +2,10 @@ import {
   StreamDecryptor,
   createDrop,
   dropChunkBounds,
+  fromBase64Url,
+  openDropHeader,
   padChunk,
+  parseFragment,
   ready,
   toBase64Url,
   wipe,
@@ -188,4 +191,46 @@ export async function downloadDrop(
   } finally {
     wipe(opened.contentKey);
   }
+}
+
+// ── Chat attachments (plan §4.1: "attachments inside chat reuse the Drop module") ──
+
+export interface AttachmentRef {
+  drop: string;
+  /** Drop link fragment (key). Travels only inside the E2EE chat message. */
+  key: string;
+  name: string;
+  size: number;
+  type: string;
+}
+
+/** Encrypt and upload a file as a 24-hour Drop; returns what the chat message carries. */
+export async function uploadAttachment(
+  file: File,
+  onProgress?: (done: number, total: number) => void,
+): Promise<AttachmentRef> {
+  const res = await uploadFile(file, {
+    expiresIn: 24 * 3600,
+    maxDownloads: null,
+    ...(onProgress ? { onProgress } : {}),
+  });
+  const key = toBase64Url(res.linkKey);
+  wipe(res.linkKey);
+  return { drop: res.id, key, name: file.name, size: file.size, type: file.type };
+}
+
+/** Fetch, decrypt and save an attachment. Must be called from a click handler. */
+export async function downloadAttachment(
+  ref: AttachmentRef,
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  await ready();
+  const meta = await api.dropMeta(ref.drop);
+  const header = await openDropHeader(parseFragment(ref.key).key, fromBase64Url(meta.header_blob));
+  if (header.locked) throw new Error('attachment unexpectedly password-protected');
+  const sink =
+    header.meta.size > STREAM_TO_DISK_THRESHOLD && canStreamToDisk()
+      ? await diskSink(header.meta.name)
+      : memorySink(header.meta.name, header.meta.type);
+  await downloadDrop(ref.drop, header, sink, onProgress);
 }

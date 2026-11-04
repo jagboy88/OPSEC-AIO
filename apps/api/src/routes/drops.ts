@@ -26,6 +26,7 @@ import {
 } from '@opsec-aio/types';
 import type { BlobStore } from '../blobs.js';
 import type { Pool } from '../db.js';
+import { rl } from '../http.js';
 
 export interface DropRouteOptions {
   pool: Pool;
@@ -57,10 +58,6 @@ const httpError = (statusCode: number) =>
   Object.assign(new Error(String(statusCode)), { statusCode });
 const notFound = () => httpError(404);
 const badRequest = () => httpError(400);
-
-const rl = (r: { max: number; windowSeconds: number }) => ({
-  rateLimit: { max: r.max, timeWindow: r.windowSeconds * 1000 },
-});
 
 function bearer(req: FastifyRequest): string | null {
   const m = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization ?? '');

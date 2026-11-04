@@ -11,6 +11,11 @@ export function blake2b(data: Uint8Array, outputLength = 32, key?: Uint8Array): 
   return sodium().crypto_generichash(outputLength, data, key ?? null);
 }
 
+/** SHA-512 (libsodium, synchronous). */
+export function sha512(data: Uint8Array): Uint8Array {
+  return sodium().crypto_hash_sha512(data);
+}
+
 /** SHA-256 via WebCrypto. */
 export async function sha256(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', asBufferSource(data)));

@@ -14,7 +14,7 @@ The full specification and the decisions behind it are in [`docs/PLAN.md`](docs/
 | 1     | Burn (notes): API, crypto format, UI, end-to-end tests                             | ✅ Done |
 | 2     | Drop (files): chunked encrypted upload, 24 h hard delete, download limits          | ✅ Done |
 | 3     | Chat: Signal Protocol 1:1 + groups, disappearing messages, safety numbers          | ✅ Done |
-| 4     | Hardening & launch                                                                 | Next    |
+| 4     | Hardening & launch: Tor onion service, security review + fixes, load test, verify  | ✅ Done |
 
 ## Repository layout
 
@@ -25,8 +25,11 @@ packages/crypto   All client-side crypto: versioned AEAD envelopes, file streams
 packages/chat     Chat client core: Signal sessions, encrypted vault, disappearing messages, groups
 packages/types    Shared API contracts and product limits (the §10 decisions, in code)
 infra/caddy       Edge: TLS 1.3 only, security headers, generated CSP
+infra/tor         Optional Tor onion service (Compose profile "tor")
+patches/          Reviewed fixes to dependencies (pnpm patchedDependencies)
+scripts/          VPS installer, updater, Tor setup, secrets, live-site verifier
 e2e/              Playwright tests against the running Docker stack
-docs/             PLAN.md (spec + decisions), DEPLOY.md (VPS runbook)
+docs/             PLAN.md (spec + decisions), DEPLOY.md (VPS runbook), THREAT_MODEL.md
 ```
 
 ## Development
@@ -75,6 +78,9 @@ vector cross-checked against RFC 9106). The same checks run in your browser at `
 
 ## Threat model
 
+The full version, including exactly what the server can see and the security review results,
+is in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
 **Protects against:** server compromise, hosting-provider snooping, database or disk leaks,
 network eavesdropping, and legal demands for content. The server has no keys, so it has
 nothing readable to hand over.
@@ -83,8 +89,9 @@ nothing readable to hand over.
 
 - **A compromised device.** Malware on your device can read whatever you can read.
 - **A malicious server serving modified JavaScript.** This is mitigated by SRI on every
-  module, a strict CSP, and a reproducible build whose hash CI publishes. It is not
-  eliminated: a browser extension that verifies the build is planned for later.
+  module, a strict CSP, and a reproducible build whose hash CI publishes; anyone can check a
+  live site with `node scripts/verify-site.mjs https://the.site`. It is not eliminated: a
+  browser extension that verifies every page load is planned for later.
 - **Traffic analysis.** The server sees when and how much, and the network sees who connects.
   Use Tor if that metadata matters to you.
 - **Secure deletion on SSDs.** Overwriting bytes is not reliable on flash storage, so deletion

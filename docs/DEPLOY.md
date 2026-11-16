@@ -13,6 +13,10 @@ bash install.sh                    # free address: <your-ip>.sslip.io
 bash install.sh chat.example.com   # or your own domain (point its A record here first)
 ```
 
+A `*.sslip.io` address is fine for trying it out, but for real use put the site on **your own
+domain**: whoever runs sslip.io's DNS could point the name at another server and get a
+certificate for it (docs/THREAT_MODEL.md §6).
+
 It runs system updates, turns on automatic security updates, sets up a firewall
 (SSH/80/443 only), fail2ban and swap, installs Docker, generates secrets, sizes Drop
 storage to the disk, builds and starts the stack, and checks HTTPS. It is safe to
@@ -80,11 +84,27 @@ at the VPS before the first start.
 Simplest safe policy: **don't back up the database at all.** The service is designed to hold
 nothing worth keeping.
 
-## 4. Rate limits
+## 4. Rate limits and resource caps
 
 Per-client limits (plan §5) apply as written when `RATE_LIMIT_MULTIPLIER` is 1, the default.
 Never raise it in production: it exists so test stacks can create many accounts from
 one IP.
+
+Settings in `.env` (defaults in brackets):
+
+| Setting                  | Meaning                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------- |
+| `DROP_STORAGE_MAX_BYTES` | Cap on stored Drop ciphertext, counted as chunks arrive [20 GiB; the installer sizes it] |
+| `DROP_MIN_FREE_BYTES`    | Drop refuses new chunks when the disk has less free space than this [2 GiB]              |
+| `MAILBOX_MAX_BYTES`      | Cap on undelivered chat ciphertext across all users [2 GiB]                              |
+
+Fixed limits: 16 KiB per chat message, 5,000 undelivered messages per user, 20 WebSockets per
+client (500 for the shared onion bucket), at most 30 one-time prekeys handed out per user per
+hour (bundles are still served without one after that), unfinished uploads deleted after 6 h.
+
+Every container has a memory and process limit in `docker-compose.yml`, sized for a 4 GB VPS
+(API 768 MiB: about 40,000 concurrent chat connections; see THREAT_MODEL.md §8). Raise them on
+a bigger server.
 
 ## 5. Open source obligation (AGPL-3.0)
 
@@ -94,20 +114,25 @@ run).
 
 ## 6. Logging
 
-- Caddy writes **no access logs**, only its own errors.
+- Caddy writes **no access logs and no request-error logs** (those would include the client
+  IP and the full URL, with note and drop ids), only its own errors (certificates, config).
 - The API logs no request lines, IPs, URLs or user agents. It logs only lifecycle events and
-  server errors.
-- Docker's `local` log driver is capped at 2 × 5 MB per container. For a 24-hour retention
-  ceiling, also run `docker compose logs` rotation or a nightly `docker compose restart`.
+  server errors, and every logged error message is scrubbed of paths, ids, tokens, UUIDs and
+  IP addresses (`apps/api/src/log.ts`, tested).
+- Docker's `local` log driver keeps at most 2 × 5 MB per container. Since nothing in the logs
+  identifies anyone, they are size-capped rather than time-capped.
+- `/api/v1/ready` (which backend is down) answers only inside the stack; from outside it is a 404. Use `/api/v1/health` for external monitoring.
 
 ## 7. Updating
 
 ```sh
-git pull
-docker compose up -d --build
+sudo bash /opt/opsec-aio/scripts/update.sh
 ```
 
-Migrations run automatically on API start, guarded by a Postgres advisory lock.
+It pulls the latest code, rebuilds, restarts (keeping secrets, `.env` and Tor if enabled),
+waits until every service is healthy, checks the site and prints the build hash now being
+served. Migrations run automatically on API start, guarded by a Postgres advisory lock. By
+hand: `git pull && docker compose up -d --build`.
 
 ## 8. Verifying the served web app
 
@@ -119,6 +144,19 @@ from the tagged source and compare.
 ```sh
 docker compose exec caddy cat /etc/caddy/build-manifest.json | head -3
 ```
+
+**Check a live site from anywhere** (you don't need access to the server):
+
+```sh
+git clone https://github.com/jagboy88/OPSEC-AIO.git && cd OPSEC-AIO
+git checkout <commit the server runs>
+pnpm install --frozen-lockfile && pnpm --filter "@opsec-aio/web..." build
+node scripts/verify-site.mjs https://the.site
+```
+
+It downloads every file the app consists of and compares SHA-256 hashes with your own build.
+`✔ MATCH` means the site serves exactly that source code. A mismatch on the right commit
+means the server is serving something else: don't trust it.
 
 ## 9. Tor onion service
 

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { runSelfTest, type SelfTestResult } from '@opsec-aio/crypto';
+  import { runSelfTest, webAssemblyAvailable, type SelfTestResult } from '@opsec-aio/crypto';
+  import WasmNotice from '#lib/components/WasmNotice.svelte';
 
   let results = $state<SelfTestResult[] | null>(null);
   let failed = $state(false);
@@ -21,7 +22,12 @@
 </p>
 
 <div class="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-5" aria-live="polite">
-  {#if failed}
+  {#if failed && !webAssemblyAvailable()}
+    <p class="mb-3 font-medium text-red-400" data-testid="selftest-status">
+      Crypto failed to load in this browser.
+    </p>
+    <WasmNotice />
+  {:else if failed}
     <p class="font-medium text-red-400" data-testid="selftest-status">
       Crypto failed to load in this browser.
     </p>

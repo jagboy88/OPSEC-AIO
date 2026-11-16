@@ -1,6 +1,8 @@
 <script lang="ts">
   import './layout.css';
   import { asset, resolve } from '$app/paths';
+  import { webAssemblyAvailable } from '@opsec-aio/crypto';
+  import WasmNotice from '#lib/components/WasmNotice.svelte';
   import type { LayoutProps } from './$types';
 
   let { children }: LayoutProps = $props();
@@ -35,6 +37,9 @@
   </header>
 
   <main id="main" class="flex-1 pb-16">
+    {#if !webAssemblyAvailable()}
+      <div class="mb-4"><WasmNotice compact /></div>
+    {/if}
     {@render children()}
   </main>
 

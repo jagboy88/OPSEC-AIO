@@ -1,4 +1,5 @@
 import sodiumLib from 'libsodium-wrappers-sumo';
+import { CryptoUnavailableError } from './errors.js';
 
 export type Sodium = typeof sodiumLib;
 
@@ -10,8 +11,22 @@ let instance: Sodium | null = null;
  */
 export async function ready(): Promise<void> {
   if (instance) return;
-  await sodiumLib.ready;
+  if (!webAssemblyAvailable()) throw new CryptoUnavailableError('webassembly');
+  try {
+    await sodiumLib.ready;
+  } catch {
+    throw new CryptoUnavailableError('failed');
+  }
   instance = sodiumLib;
+}
+
+/** libsodium 0.8 is WebAssembly-only (no asm.js fallback). */
+export function webAssemblyAvailable(): boolean {
+  try {
+    return typeof WebAssembly === 'object' && typeof WebAssembly.instantiate === 'function';
+  } catch {
+    return false;
+  }
 }
 
 /** @internal Synchronous accessor; throws if {@link ready} has not completed. */

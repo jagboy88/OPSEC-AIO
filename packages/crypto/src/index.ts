@@ -1,5 +1,5 @@
-export { ready } from './sodium.js';
-export { DecryptionError, FormatError } from './errors.js';
+export { ready, webAssemblyAvailable } from './sodium.js';
+export { CryptoUnavailableError, DecryptionError, FormatError } from './errors.js';
 export { Alg, FORMAT_VERSION, KEY_LENGTH, type AlgId } from './format.js';
 export {
   concatBytes,

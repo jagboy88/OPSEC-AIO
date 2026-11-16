@@ -16,5 +16,18 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      testIgnore: /no-wasm\.spec\.ts/,
+    },
+    {
+      // Hardened browsers (iOS Lockdown Mode, Vanadium without JIT, Tor
+      // "Safer") have no WebAssembly; jitless V8 reproduces that.
+      name: 'chromium-no-wasm',
+      use: { ...devices['Desktop Chrome'], launchOptions: { args: ['--js-flags=--jitless'] } },
+      testMatch: /no-wasm\.spec\.ts/,
+    },
+  ],
 });

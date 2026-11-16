@@ -108,6 +108,31 @@ test.describe('Chat', () => {
     ).toBeVisible();
     await open(bob, '# Night shift');
     await expect(bob.getByTestId('message-text')).toHaveText('carol checking in');
+
+    // Only the creator manages members; every change is spelled out.
+    await bob.getByRole('button', { name: 'Conversation menu' }).click();
+    await bob.getByRole('button', { name: 'Members', exact: true }).click();
+    await expect(bob.getByTestId('group-members')).toContainText(`@${a}`);
+    await expect(bob.getByRole('button', { name: `Remove @${c}` })).toHaveCount(0);
+
+    await alice.getByRole('button', { name: 'Conversation menu' }).click();
+    await alice.getByRole('button', { name: 'Manage members' }).click();
+    await alice.getByRole('button', { name: `Remove @${c}` }).click();
+    await expect(alice.getByText(`You removed @${c}.`)).toBeVisible();
+    await expect(bob.getByText(`@${a} removed @${c}.`)).toBeVisible();
+    await expect(carol.getByText(`@${a} removed you.`)).toBeVisible();
+    await send(alice, 'just us now');
+    await expect(bob.getByTestId('message-text').filter({ hasText: 'just us now' })).toBeVisible();
+    await expect(carol.getByTestId('message-text').filter({ hasText: 'just us now' })).toHaveCount(
+      0,
+    );
+
+    await alice.getByLabel('Usernames to add').fill(`@${c}`);
+    await alice.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(alice.getByText(`You added @${c}.`)).toBeVisible();
+    await expect(carol.getByText(`@${a} added you back.`)).toBeVisible();
+    await send(carol, 'back again');
+    await expect(alice.getByTestId('message-text').filter({ hasText: 'back again' })).toBeVisible();
   });
 
   test('files are shared as encrypted attachments', async ({ browser }) => {

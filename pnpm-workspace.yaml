@@ -6,3 +6,8 @@ packages:
 # Block install scripts by default; only allow what we have reviewed.
 onlyBuiltDependencies:
   - esbuild
+
+# Local fixes to dependencies, reviewed and tested (see the patch file header
+# comments and packages/chat/test/client.test.ts).
+patchedDependencies:
+  '@privacyresearch/libsignal-protocol-typescript@0.0.16': patches/@privacyresearch__libsignal-protocol-typescript@0.0.16.patch

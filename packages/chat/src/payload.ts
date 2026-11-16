@@ -15,7 +15,15 @@ import {
  */
 
 export const PAYLOAD_PAD_BLOCK = 160;
-export const TEXT_MAX_CHARS = 8000;
+/** Longest text a user can send. */
+export const TEXT_MAX_CHARS = 4000;
+/** Accepted when receiving (messages from before the limit was lowered). */
+const TEXT_MAX_CHARS_RECEIVED = 8000;
+/**
+ * Largest encoded payload; leaves room for Signal's overhead under the
+ * server's CHAT_MESSAGE_MAX_BYTES (16 KiB).
+ */
+export const PAYLOAD_MAX_BYTES = 15 * 1024;
 const GROUP_NAME_MAX = 64;
 const ID_RE = /^[A-Za-z0-9_-]{22}$/;
 
@@ -53,9 +61,18 @@ export class PayloadError extends Error {
   }
 }
 
+/** The payload is valid but too big to send (e.g. text full of escaped characters). */
+export class PayloadTooLargeError extends Error {
+  constructor() {
+    super('message is too long');
+    this.name = 'PayloadTooLargeError';
+  }
+}
+
 export function encodePayload(p: Payload): Uint8Array {
-  validate(p); // never send something a peer would reject
+  validate(p, TEXT_MAX_CHARS); // never send something a peer would reject
   const json = utf8Encode(JSON.stringify(p));
+  if (json.length + 1 > PAYLOAD_MAX_BYTES) throw new PayloadTooLargeError();
   const len = Math.ceil((json.length + 1) / PAYLOAD_PAD_BLOCK) * PAYLOAD_PAD_BLOCK;
   const out = new Uint8Array(len);
   out.set(json);
@@ -73,17 +90,17 @@ export function decodePayload(bytes: Uint8Array): Payload {
   } catch {
     throw new PayloadError();
   }
-  validate(parsed);
+  validate(parsed, TEXT_MAX_CHARS_RECEIVED);
   return parsed;
 }
 
 const isUser = (u: unknown): u is string => typeof u === 'string' && USERNAME_PATTERN.test(u);
 const isTimer = (t: unknown): t is number =>
   typeof t === 'number' && (DISAPPEARING_TIMER_OPTIONS_SECONDS as readonly number[]).includes(t);
-const isText = (t: unknown, max = TEXT_MAX_CHARS): t is string =>
+const isText = (t: unknown, max: number): t is string =>
   typeof t === 'string' && t.length > 0 && t.length <= max;
 
-function validate(x: unknown): asserts x is Payload {
+function validate(x: unknown, textMax: number): asserts x is Payload {
   const p = x as Record<string, unknown>;
   if (
     typeof p !== 'object' ||
@@ -99,7 +116,7 @@ function validate(x: unknown): asserts x is Payload {
   }
   switch (p.kind) {
     case 'text':
-      if (!isText(p.text) || !isTimer(p.timer)) throw new PayloadError();
+      if (!isText(p.text, textMax) || !isTimer(p.timer)) throw new PayloadError();
       return;
     case 'file': {
       const f = p.file as Record<string, unknown> | undefined;
@@ -115,7 +132,7 @@ function validate(x: unknown): asserts x is Payload {
         f.size < 0 ||
         typeof f.type !== 'string' ||
         f.type.length > 255 ||
-        (p.text !== undefined && !isText(p.text)) ||
+        (p.text !== undefined && !isText(p.text, textMax)) ||
         !isTimer(p.timer)
       ) {
         throw new PayloadError();

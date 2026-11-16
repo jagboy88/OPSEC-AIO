@@ -15,7 +15,9 @@ import {
   toBase64Url,
   type SigningKeyPair,
 } from '@opsec-aio/crypto';
+import { CHAT_MESSAGE_MAX_BYTES, CHAT_PENDING_PAGE } from '@opsec-aio/types';
 import { buildApp } from '../src/app.js';
+import { OTPK_HANDOUTS_PER_HOUR } from '../src/routes/keys.js';
 import { MIGRATIONS_DIR, createPool, migrate, type Pool } from '../src/db.js';
 import { sweep } from '../src/sweeper.js';
 
@@ -30,15 +32,21 @@ describe.skipIf(!url)('Chat API (postgres)', () => {
   let n = 0;
   const ip = () => `10.2.${Math.floor(++n / 250)}.${n % 250}`;
 
+  const pepper = randomBytes(32);
+  async function makeApp(extra: { mailboxMaxBytes?: number } = {}) {
+    const a = await buildApp({
+      config: { logLevel: 'silent', trustProxyHops: 0 },
+      probes: {},
+      data: { pool, tokenPepper: pepper, ...extra },
+    });
+    await a.ready();
+    return a;
+  }
+
   beforeAll(async () => {
     pool = createPool(url!);
     await migrate(pool, MIGRATIONS_DIR);
-    app = await buildApp({
-      config: { logLevel: 'silent', trustProxyHops: 0 },
-      probes: {},
-      data: { pool, tokenPepper: randomBytes(32) },
-    });
-    await app.ready();
+    app = await makeApp();
   });
   afterAll(async () => {
     await app?.close();
@@ -223,6 +231,30 @@ describe.skipIf(!url)('Chat API (postgres)', () => {
       expect(new Set(ids).size).toBe(10);
     });
 
+    it('hands out at most 30 one-time prekeys per user per hour, but keeps serving bundles', async () => {
+      await register('alice', 40);
+      const b = await register('bob', 0);
+      const got: (number | null)[] = [];
+      for (let i = 0; i < OTPK_HANDOUTS_PER_HOUR + 5; i++) {
+        const r = await call('GET', '/keys/bundle/alice', { token: b.token });
+        expect(r.statusCode).toBe(200);
+        got.push(r.json().one_time_prekey?.key_id ?? null);
+      }
+      expect(got.filter((k) => k !== null)).toHaveLength(OTPK_HANDOUTS_PER_HOUR);
+      expect(got.slice(OTPK_HANDOUTS_PER_HOUR)).toEqual([null, null, null, null, null]);
+      const { rows } = await pool.query(
+        "SELECT count(*)::int AS n FROM one_time_prekeys k JOIN users u ON u.id = k.user_id WHERE u.username = 'alice'",
+      );
+      expect(rows[0].n).toBe(40 - OTPK_HANDOUTS_PER_HOUR);
+      // A new hour window hands them out again.
+      await pool.query(
+        "UPDATE users SET otpk_window_start = now() - interval '61 minutes' WHERE username = 'alice'",
+      );
+      expect(
+        (await call('GET', '/keys/bundle/alice', { token: b.token })).json().one_time_prekey,
+      ).not.toBeNull();
+    });
+
     it('replenishes up to the cap and rotates signed prekeys keeping two', async () => {
       const a = await register('alice', 0);
       const batch = (start: number, count: number) =>
@@ -291,6 +323,59 @@ describe.skipIf(!url)('Chat API (postgres)', () => {
         [],
       );
       expect((await pool.query('SELECT 1 FROM mailbox')).rowCount).toBe(0);
+    });
+
+    it('pages pending messages, and ACKs a full page in one request', async () => {
+      const a = await register('alice');
+      const b = await register('bob');
+      for (let i = 0; i < 15; i++) {
+        await call('POST', '/messages', {
+          token: a.token,
+          body: {
+            messages: Array.from({ length: 20 }, () => ({ to: 'bob', type: 1, body: body() })),
+          },
+        });
+      }
+      const pending = (await call('GET', '/messages/pending', { token: b.token })).json().messages;
+      expect(pending).toHaveLength(CHAT_PENDING_PAGE);
+      const ack = await call('POST', '/messages/ack', {
+        token: b.token,
+        body: { ids: pending.map((m: { id: string }) => m.id) },
+      });
+      expect(ack.statusCode).toBe(204);
+      expect((await pool.query('SELECT 1 FROM mailbox')).rowCount).toBe(300 - CHAT_PENDING_PAGE);
+    });
+
+    it('refuses messages over 16 KiB, and new mail once all mailboxes hold the global cap', async () => {
+      const a = await register('alice');
+      await register('bob');
+      const big = toBase64Url(randomBytes(CHAT_MESSAGE_MAX_BYTES + 1));
+      const tooBig = await call('POST', '/messages', {
+        token: a.token,
+        body: { messages: [{ to: 'bob', type: 1, body: big }] },
+      });
+      expect(tooBig.statusCode).toBe(400);
+
+      const small = await makeApp({ mailboxMaxBytes: 3 * CHAT_MESSAGE_MAX_BYTES });
+      try {
+        const full = toBase64Url(randomBytes(CHAT_MESSAGE_MAX_BYTES));
+        const send = () =>
+          small.inject({
+            method: 'POST',
+            url: '/api/v1/messages',
+            remoteAddress: ip(),
+            headers: { authorization: `Bearer ${a.token}` },
+            payload: { messages: [{ to: 'bob', type: 1, body: full }] },
+          });
+        expect((await send()).statusCode).toBe(201);
+        expect((await send()).statusCode).toBe(201);
+        expect((await send()).statusCode).toBe(201);
+        const res = await send();
+        expect(res.statusCode).toBe(507);
+        expect(res.json()).toEqual({ error: 'storage_full' });
+      } finally {
+        await small.close();
+      }
     });
 
     it('fans out a batch, and rejects the whole batch if any recipient is unknown', async () => {
@@ -370,6 +455,73 @@ describe.skipIf(!url)('Chat API (postgres)', () => {
       );
       ws.send(JSON.stringify({ type: 'auth', token: 'A'.repeat(43) }));
       expect(await closed).toBe(4401);
+    });
+
+    it('answers garbage WebSocket frames with an error instead of crashing', async () => {
+      const b = await register('bob');
+      const ws = await app.injectWS('/api/v1/ws');
+      const replies: unknown[] = [];
+      ws.on('message', (raw: Buffer) => replies.push(JSON.parse(raw.toString())));
+      for (const frame of [
+        'null',
+        '42',
+        '"auth"',
+        '[]',
+        '{}',
+        '{"type":7}',
+        'not json',
+        '{"type":"auth"}',
+      ]) {
+        ws.send(frame);
+      }
+      ws.send(JSON.stringify({ type: 'auth', token: { not: 'a string' } }));
+      ws.send(JSON.stringify({ type: 'ping' }));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(replies).toHaveLength(10);
+      expect(
+        replies.slice(0, 9).every((m) => (m as { error?: string }).error === 'bad_request'),
+      ).toBe(true);
+      expect(replies[9]).toEqual({ type: 'pong' });
+      // The process and this socket are still fine: auth still works.
+      const ready = new Promise<void>((resolve) =>
+        ws.on('message', (raw: Buffer) => {
+          if (JSON.parse(raw.toString()).type === 'ready') resolve();
+        }),
+      );
+      ws.send(JSON.stringify({ type: 'auth', token: b.token }));
+      await ready;
+      ws.terminate();
+    });
+
+    it('caps open WebSockets per client', async () => {
+      // A real listener: injected sockets never report the server-side close.
+      const addr = await app.listen({ port: 0, host: '127.0.0.1' });
+      const url = `${addr.replace('http', 'ws')}/api/v1/ws`;
+      const connect = () =>
+        new Promise<WebSocket>((resolve, reject) => {
+          const ws = new WebSocket(url);
+          ws.addEventListener('open', () => resolve(ws));
+          ws.addEventListener('error', () => reject(new Error('connect failed')));
+        });
+      const closed = (ws: WebSocket) =>
+        new Promise<number>((resolve) => ws.addEventListener('close', (e) => resolve(e.code)));
+
+      const open = await Promise.all(Array.from({ length: 20 }, connect));
+      const extra = await connect();
+      expect(await closed(extra)).toBe(4429);
+      // Closing one frees a slot.
+      const first = open[0]!;
+      const firstClosed = closed(first);
+      first.close();
+      await firstClosed;
+      await new Promise((r) => setTimeout(r, 50));
+      const again = await connect();
+      const pong = new Promise<unknown>((resolve) =>
+        again.addEventListener('message', (e) => resolve(JSON.parse(String(e.data)))),
+      );
+      again.send(JSON.stringify({ type: 'ping' }));
+      expect(await pong).toEqual({ type: 'pong' });
+      for (const ws of [...open.slice(1), again]) ws.close();
     });
 
     it('account deletion removes keys, sessions and queued mail; senders become anonymous', async () => {

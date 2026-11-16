@@ -5,6 +5,7 @@ import type { Redis } from 'ioredis';
 import type { BlobStore } from './blobs.js';
 import type { Config } from './config.js';
 import type { Pool } from './db.js';
+import { serializeError } from './log.js';
 import { setRateLimitMultiplier } from './http.js';
 import { MemoryNotifier, type Notifier } from './notifier.js';
 import { registerRateLimit } from './ratelimit.js';
@@ -32,13 +33,20 @@ export interface AppDeps {
     /** Drop storage; Drop routes are only registered when present. */
     blobs?: BlobStore;
     dropStorageMaxBytes?: number;
+    dropMinFreeBytes?: number;
+    /** Cap on queued chat ciphertext across all mailboxes. */
+    mailboxMaxBytes?: number;
     /** Cross-process WebSocket fan-out; in-process when absent. */
     notifier?: Notifier;
   };
 }
 
-/** Default cap on reserved Drop storage: 20 GiB. Override with DROP_STORAGE_MAX_BYTES. */
+/** Default cap on stored Drop ciphertext: 20 GiB. Override with DROP_STORAGE_MAX_BYTES. */
 export const DEFAULT_DROP_STORAGE_MAX_BYTES = 20 * 1024 ** 3;
+/** Default free-space floor on the blob volume: 2 GiB. Override with DROP_MIN_FREE_BYTES. */
+export const DEFAULT_DROP_MIN_FREE_BYTES = 2 * 1024 ** 3;
+/** Default cap on queued chat ciphertext: 2 GiB. Override with MAILBOX_MAX_BYTES. */
+export const DEFAULT_MAILBOX_MAX_BYTES = 2 * 1024 ** 3;
 
 /** Default JSON body limit; endpoints that accept more opt in explicitly. */
 const DEFAULT_BODY_LIMIT = 16 * 1024;
@@ -65,7 +73,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       serializers: {
         req: () => ({}),
         res: () => ({}),
-        err: (err: Error) => ({ type: err.name, message: err.message, stack: err.stack ?? '' }),
+        err: serializeError,
       },
     },
     logController: new LogController({ disableRequestLogging: true }),
@@ -108,7 +116,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     await registerRateLimit(app, { pepper: tokenPepper, ...(redis ? { redis } : {}) });
     await app.register(noteRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
     // Chat (Phase 3). WebSocket frames from clients are tiny control messages.
-    await app.register(websocket, { options: { maxPayload: 4096 } });
+    await app.register(websocket, {
+      options: { maxPayload: 4096 },
+      // Covers both handler errors and broken connections: drop the socket,
+      // log only what kind of error it was.
+      errorHandler: (err, socket, req) => {
+        // Errors with a code are connection-level (ECONNRESET, WS_ERR_*) and
+        // routine on mobile networks; anything else is a bug worth seeing.
+        if ((err as { code?: unknown }).code) req.log.debug({ err }, 'websocket closed on error');
+        else req.log.warn({ err }, 'websocket handler failed');
+        socket.terminate();
+      },
+    });
     await app.register(authRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
     await app.register(keyRoutes, { prefix: API_PREFIX, pool, pepper: tokenPepper });
     await app.register(messageRoutes, {
@@ -116,6 +135,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       pool,
       pepper: tokenPepper,
       notifier: deps.data.notifier ?? new MemoryNotifier(),
+      mailboxMaxBytes: deps.data.mailboxMaxBytes ?? DEFAULT_MAILBOX_MAX_BYTES,
     });
     if (deps.data.blobs) {
       await app.register(dropRoutes, {
@@ -124,6 +144,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         pepper: tokenPepper,
         blobs: deps.data.blobs,
         storageMaxBytes: deps.data.dropStorageMaxBytes ?? DEFAULT_DROP_STORAGE_MAX_BYTES,
+        minFreeBytes: deps.data.dropMinFreeBytes ?? DEFAULT_DROP_MIN_FREE_BYTES,
       });
     }
   }

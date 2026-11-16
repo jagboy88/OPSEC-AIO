@@ -1,0 +1,22 @@
+diff --git a/lib/session-record.js b/lib/session-record.js
+index cf24845565d305a1b5ddedbabdf9088d91b6750a..f5608891178b4c95e7f80fa84a2901728104404f 100644
+--- a/lib/session-record.js
++++ b/lib/session-record.js
+@@ -194,11 +194,15 @@ class SessionRecord {
+                     index = i;
+                 }
+             }
+-            const idx = util.arrayBufferToString(oldest.ephemeralKey);
++            // Chains are keyed by the base64 of the remote ephemeral key
++            // (see SessionCipher.maybeStepRatchet). Upstream deleted
++            // session[binaryString], which never matched, so old receiving
++            // chains (and their unused message keys) were kept forever.
++            const idx = base64_js_1.default.fromByteArray(new Uint8Array(oldest.ephemeralKey));
+             if (!idx) {
+                 throw new Error(`invalid index for chain`);
+             }
+-            delete session[idx];
++            delete session.chains[idx];
+             session.oldRatchetList.splice(index, 1);
+         }
+     }

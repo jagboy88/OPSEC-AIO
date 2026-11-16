@@ -53,6 +53,27 @@ describe('note format v1 (pinned vectors)', () => {
   });
 });
 
+describe('note format v2 (pinned vectors)', () => {
+  const v2 = JSON.parse(
+    readFileSync(new URL('./fixtures/note-vectors.json', import.meta.url), 'utf8'),
+  ) as Record<
+    'v2_plain' | 'v2_password',
+    { key: string; ciphertext: string; text: string; password?: string }
+  >;
+  it('decrypts v2 notes (plain and password) created by an earlier client', async () => {
+    const plain = await decryptNote(fromHex(v2.v2_plain.key), fromHex(v2.v2_plain.ciphertext));
+    assertUnlocked(plain);
+    expect(plain.text).toBe(v2.v2_plain.text);
+    const locked = await decryptNote(
+      fromHex(v2.v2_password.key),
+      fromHex(v2.v2_password.ciphertext),
+    );
+    assertLocked(locked);
+    expect(await locked.unlock(v2.v2_password.password!)).toBe(v2.v2_password.text);
+    expect(v2.v2_plain.ciphertext.length).toBe(v2.v2_password.ciphertext.length);
+  });
+});
+
 describe('encryptNote / decryptNote', () => {
   it('round-trips Unicode text', async () => {
     const text = 'Meet at 9.\nKey: 🔑 — ünïcødé';
@@ -60,6 +81,12 @@ describe('encryptNote / decryptNote', () => {
     const n = await decryptNote(key, ciphertext);
     assertUnlocked(n);
     expect(n.text).toBe(text);
+  });
+
+  it('the size does not reveal whether a password was used', async () => {
+    const plain = await encryptNote('same text');
+    const locked = await encryptNote('same text', { password: 'pw', kdfParams: FAST });
+    expect(plain.ciphertext.length).toBe(locked.ciphertext.length);
   });
 
   it('pads so the server only learns a 1 KiB size bucket', async () => {

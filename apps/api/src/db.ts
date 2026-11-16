@@ -4,7 +4,11 @@ import pg from 'pg';
 export type Pool = pg.Pool;
 
 export function createPool(connectionString: string): Pool {
-  return new pg.Pool({ connectionString, max: 10, idleTimeoutMillis: 30_000 });
+  const pool = new pg.Pool({ connectionString, max: 10, idleTimeoutMillis: 30_000 });
+  // An idle client dying (e.g. Postgres restart) emits 'error' on the pool;
+  // unhandled, that would crash the process. pg reconnects on the next query.
+  pool.on('error', () => {});
+  return pool;
 }
 
 /** Arbitrary constant so concurrent API replicas never migrate at the same time. */

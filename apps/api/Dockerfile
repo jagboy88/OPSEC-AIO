@@ -5,6 +5,8 @@ FROM node:22.23.4-alpine AS build
 WORKDIR /repo
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+# Reviewed local fixes to dependencies (pnpm patchedDependencies).
+COPY patches patches
 COPY packages/crypto/package.json packages/crypto/
 COPY packages/types/package.json packages/types/
 COPY packages/chat/package.json packages/chat/

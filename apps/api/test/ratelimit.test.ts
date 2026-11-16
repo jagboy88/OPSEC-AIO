@@ -31,9 +31,11 @@ describe('rate-limit client keys', () => {
     );
   });
 
-  it('group an IPv6 /64 together but separate different /64s', () => {
+  it('group an IPv6 /56 together but separate different /56s', () => {
     expect(clientKey('2001:db8:1:2::1', pepper)).toBe(clientKey('2001:db8:1:2:ffff::9', pepper));
-    expect(clientKey('2001:db8:1:2::1', pepper)).not.toBe(clientKey('2001:db8:1:3::1', pepper));
+    // Same /56, different /64: one customer's prefix is one bucket.
+    expect(clientKey('2001:db8:1:2::1', pepper)).toBe(clientKey('2001:db8:1:ff::1', pepper));
+    expect(clientKey('2001:db8:1:2::1', pepper)).not.toBe(clientKey('2001:db8:1:100::1', pepper));
   });
 });
 

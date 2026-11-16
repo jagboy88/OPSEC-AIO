@@ -82,6 +82,19 @@ export class SignalStore implements StorageType {
     const username = userOf(encodedAddress);
     const rec = await this.getIdentity(username);
     if (rec && sameKey(publicKey, rec.key)) return false;
+    if (rec?.verified) {
+      // A verified contact's key is never replaced silently, even by an
+      // incoming message (the library calls this after decrypting a first
+      // message from a new identity). Keep the verified key, so sending stays
+      // blocked by isTrustedIdentity(SENDING), and park the new key until the
+      // user checks it and calls acceptNewIdentity().
+      await this.kv.setJSON(`pending-identity:${username}`, abToB64(publicKey));
+      if (!rec.changed) {
+        await this.putIdentity(username, { ...rec, changed: true });
+        this.onIdentityChanged(username);
+      }
+      return true;
+    }
     await this.putIdentity(username, {
       key: abToB64(publicKey),
       verified: false,

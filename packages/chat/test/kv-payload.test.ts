@@ -8,6 +8,9 @@ import {
   hasVault,
   unlockVault,
   PayloadError,
+  PayloadTooLargeError,
+  PAYLOAD_MAX_BYTES,
+  TEXT_MAX_CHARS,
   type Payload,
 } from '../src/index.js';
 
@@ -78,5 +81,24 @@ describe('payloads', () => {
     ];
     for (const p of bad) expect(() => encodePayload(p as Payload)).toThrow(PayloadError);
     expect(() => decodePayload(new Uint8Array(160))).toThrow(PayloadError);
+  });
+
+  it('fits the longest allowed text under the 16 KiB server cap, and refuses bigger payloads', () => {
+    // 4000 three-byte characters (e.g. CJK) is the worst case a person can type.
+    const cjk: Payload = { ...base, kind: 'text', text: '界'.repeat(TEXT_MAX_CHARS), timer: 0 };
+    const bytes = encodePayload(cjk);
+    expect(bytes.length).toBeLessThanOrEqual(PAYLOAD_MAX_BYTES);
+    expect(decodePayload(bytes)).toEqual(cjk);
+    // Over the character limit, or within it but huge once JSON-escaped.
+    expect(() => encodePayload({ ...cjk, text: 'x'.repeat(TEXT_MAX_CHARS + 1) })).toThrow(
+      PayloadError,
+    );
+    const escaped: Payload = {
+      ...base,
+      kind: 'text',
+      text: '\u0001'.repeat(TEXT_MAX_CHARS),
+      timer: 0,
+    };
+    expect(() => encodePayload(escaped)).toThrow(PayloadTooLargeError);
   });
 });

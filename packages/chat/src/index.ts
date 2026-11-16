@@ -22,6 +22,9 @@ export {
   decodePayload,
   encodePayload,
   PayloadError,
+  PayloadTooLargeError,
+  PAYLOAD_MAX_BYTES,
+  TEXT_MAX_CHARS,
   type FileRef,
   type Payload,
 } from './payload.js';

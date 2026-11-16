@@ -43,7 +43,14 @@ async function main(): Promise<void> {
       tokenPepper: config.tokenPepper,
       redis,
       notifier,
-      ...(blobs ? { blobs, dropStorageMaxBytes: config.dropStorageMaxBytes } : {}),
+      mailboxMaxBytes: config.mailboxMaxBytes,
+      ...(blobs
+        ? {
+            blobs,
+            dropStorageMaxBytes: config.dropStorageMaxBytes,
+            dropMinFreeBytes: config.dropMinFreeBytes,
+          }
+        : {}),
     },
   });
 
@@ -53,6 +60,12 @@ async function main(): Promise<void> {
   }
 
   const stopSweeper = startSweeper(pool, app.log, blobs);
+
+  // Last line of defence: log (without details that could carry ids) and keep
+  // serving instead of letting one bug take every user offline.
+  process.on('unhandledRejection', (e) => {
+    app.log.error({ type: e instanceof Error ? e.name : typeof e }, 'unhandled rejection');
+  });
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');

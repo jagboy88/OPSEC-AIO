@@ -15,8 +15,12 @@ export interface Config {
    * backups, on a LUKS-encrypted host disk). Empty = storage disabled.
    */
   blobDir: string;
-  /** Cap on reserved Drop ciphertext across live drops. */
+  /** Cap on stored Drop ciphertext across all drops. */
   dropStorageMaxBytes: number;
+  /** Refuse Drop chunks when the blob volume has less free space than this. */
+  dropMinFreeBytes: number;
+  /** Cap on queued chat ciphertext across all mailboxes. */
+  mailboxMaxBytes: number;
   /** Server-side pepper for hashing deletion/upload/session tokens (≥ 32 bytes). */
   tokenPepper: Uint8Array;
   migrateOnStart: boolean;
@@ -73,6 +77,14 @@ export function loadConfig(env: Env = process.env): Config {
     throw new Error('invalid DROP_STORAGE_MAX_BYTES');
   }
 
+  const dropMinFreeBytes = Number(read(env, 'DROP_MIN_FREE_BYTES') ?? 2 * 1024 ** 3);
+  if (!Number.isSafeInteger(dropMinFreeBytes) || dropMinFreeBytes < 0) {
+    throw new Error('invalid DROP_MIN_FREE_BYTES');
+  }
+  const mailboxMaxBytes = Number(read(env, 'MAILBOX_MAX_BYTES') ?? 2 * 1024 ** 3);
+  if (!Number.isSafeInteger(mailboxMaxBytes) || mailboxMaxBytes < 0) {
+    throw new Error('invalid MAILBOX_MAX_BYTES');
+  }
   const rateLimitMultiplier = Number(read(env, 'RATE_LIMIT_MULTIPLIER') ?? '1');
   if (
     !Number.isInteger(rateLimitMultiplier) ||
@@ -105,6 +117,8 @@ export function loadConfig(env: Env = process.env): Config {
     redisUrl: withPassword(required(env, 'REDIS_URL'), read(env, 'REDIS_PASSWORD'), 'REDIS_URL'),
     blobDir: read(env, 'BLOB_DIR') ?? '',
     dropStorageMaxBytes,
+    dropMinFreeBytes,
+    mailboxMaxBytes,
     tokenPepper,
     migrateOnStart: (read(env, 'MIGRATE_ON_START') ?? 'true') === 'true',
     rateLimitMultiplier,

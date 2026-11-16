@@ -72,12 +72,18 @@ export const ONE_TIME_PREKEY_MAX = 300;
 /** Login sessions are short: the client can always re-authenticate with its key. */
 export const SESSION_TTL_SECONDS = 24 * HOUR;
 export const AUTH_CHALLENGE_TTL_SECONDS = 2 * MINUTE;
-/** Max ciphertext per chat message. Files go through Drop, not the mailbox. */
-export const CHAT_MESSAGE_MAX_BYTES = 64 * 1024;
+/**
+ * Max ciphertext per chat message. Files go through Drop, not the mailbox.
+ * Fits the longest allowed text (4000 characters, up to 3 UTF-8 bytes each)
+ * plus padding and Signal overhead.
+ */
+export const CHAT_MESSAGE_MAX_BYTES = 16 * 1024;
 /** Max ciphertexts per send request (one per group member). */
 export const CHAT_BATCH_MAX = GROUP_MAX_MEMBERS;
 /** Max undelivered messages queued for one recipient. */
 export const CHAT_MAILBOX_MAX = 5000;
+/** Messages returned per `GET /messages/pending` page (and max ids per ACK). */
+export const CHAT_PENDING_PAGE = 200;
 
 // ── Rate limits (per IP unless stated) ──────────────────────────────────────
 export const RATE_LIMITS = {

@@ -9,11 +9,12 @@ const DAY_MS = 86_400_000;
  * Rate-limit bucket key for a client. Raw IPs never reach Redis: the key is a
  * BLAKE2b MAC of (day, IP) under the server pepper, so it changes every UTC day
  * and cannot be reversed or linked across days without the pepper. IPv6
- * addresses are grouped by /64 so one host cannot rotate through its subnet.
+ * addresses are grouped by /56 (a typical home or VPS allocation) so one
+ * customer cannot rotate through their own prefix.
  */
 export function clientKey(ip: string, pepper: Uint8Array, now = Date.now()): string {
   const day = Math.floor(now / DAY_MS);
-  const subject = `${day}|${normalizeIP(ip, 64)}`;
+  const subject = `${day}|${normalizeIP(ip, 56)}`;
   return toBase64Url(blake2b(utf8Encode(subject), 16, pepper));
 }
 
@@ -29,7 +30,14 @@ export const ONION_KEY_PREFIX = 'onion:';
 export function rateLimitKey(req: FastifyRequest, pepper: Uint8Array, now = Date.now()): string {
   if (req.headers['x-opsec-via'] === 'onion')
     return `${ONION_KEY_PREFIX}${Math.floor(now / DAY_MS)}`;
-  return clientKey(req.ip, pepper, now);
+  let ip: string;
+  try {
+    ip = req.ip;
+  } catch {
+    // Only an injected test request has no socket to take an address from.
+    ip = '0.0.0.0';
+  }
+  return clientKey(ip, pepper, now);
 }
 
 export interface RateLimitDeps {

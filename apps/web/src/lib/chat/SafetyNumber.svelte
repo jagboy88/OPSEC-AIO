@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatSafetyNumber } from '@opsec-aio/chat';
+  import { ChatInputError, formatSafetyNumber } from '@opsec-aio/chat';
   import QrCode from '#lib/components/QrCode.svelte';
   import { chat } from './state.svelte.js';
 
@@ -7,17 +7,33 @@
 
   let digits = $state<string | null | undefined>(undefined);
   let verified = $state(false);
+  /** Their key changed after the user verified it; the new key isn't accepted yet. */
+  let pendingChange = $state(false);
+  let error = $state('');
+
+  async function load() {
+    const c = chat.client;
+    if (!c) return;
+    const [d, r] = await Promise.all([c.safetyNumber(username), c.identity(username)]);
+    digits = d;
+    verified = !!r?.verified;
+    pendingChange = !!(r?.verified && r.changed);
+  }
 
   $effect(() => {
     void chat.version;
-    const c = chat.client;
-    if (!c) return;
-    void c.safetyNumber(username).then((d) => (digits = d));
-    void c.identity(username).then((r) => (verified = !!r?.verified));
+    void load();
   });
 
   async function toggle() {
-    await chat.client?.setVerified(username, !verified);
+    error = '';
+    try {
+      // Pass the number on screen: if the key changed meanwhile, nothing is marked.
+      await chat.client?.setVerified(username, !verified, digits ?? undefined);
+    } catch (err) {
+      error = err instanceof ChatInputError ? err.message : 'Could not save. Try again.';
+    }
+    await load();
   }
 </script>
 
@@ -33,6 +49,11 @@
   </div>
   {#if digits === undefined}
     <p class="text-sm text-neutral-400">Computing…</p>
+  {:else if pendingChange}
+    <p class="text-sm text-amber-200" role="alert">
+      @{username}'s key changed after you verified it. Accept the new key (the red banner above) to
+      see the new safety number, then compare it again.
+    </p>
   {:else if digits === null}
     <p class="text-sm text-neutral-400">
       Exchange a message first; the safety number comes from both of your keys.
@@ -63,5 +84,6 @@
     >
       {verified ? '✓ Verified (tap to clear)' : 'Mark as verified'}
     </button>
+    {#if error}<p role="alert" class="text-sm text-red-400">{error}</p>{/if}
   {/if}
 </section>

@@ -18,6 +18,10 @@ x-hardening: &hardening
 services:
   caddy:
     <<: *hardening
+    # Resource ceilings: one runaway service can't starve the others (or the
+    # host) of memory or processes. Sized for a 4 GB VPS; raise on bigger ones.
+    mem_limit: 512m
+    pids_limit: 256
     build:
       context: .
       dockerfile: infra/caddy/Dockerfile
@@ -44,6 +48,8 @@ services:
 
   api:
     <<: *hardening
+    mem_limit: 768m
+    pids_limit: 256
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -60,6 +66,8 @@ services:
       TOKEN_PEPPER_FILE: /run/secrets/token_pepper
       BLOB_DIR: /data/blobs
       DROP_STORAGE_MAX_BYTES: ${DROP_STORAGE_MAX_BYTES:-21474836480}
+      DROP_MIN_FREE_BYTES: ${DROP_MIN_FREE_BYTES:-2147483648}
+      MAILBOX_MAX_BYTES: ${MAILBOX_MAX_BYTES:-2147483648}
       # Leave at 1 in production. Test stacks raise it (CI sets 100).
       RATE_LIMIT_MULTIPLIER: ${RATE_LIMIT_MULTIPLIER:-1}
     secrets:
@@ -93,6 +101,8 @@ services:
   postgres:
     <<: *hardening
     image: postgres:16.15-alpine
+    mem_limit: 1g
+    pids_limit: 256
     # The entrypoint needs these to initialise the data dir, then drops to the postgres user.
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     read_only: true
@@ -118,19 +128,28 @@ services:
   redis:
     <<: *hardening
     image: redis:7.4.12-alpine
+    mem_limit: 320m
+    pids_limit: 64
     user: redis
     read_only: true
-    # Persistence disabled: sessions, rate limits and job queues live in memory
-    # only. Expiry is also enforced by the database sweeper, so a restart loses
-    # nothing important.
+    # Persistence disabled: rate limits and WebSocket fan-out live in memory
+    # only, so a restart loses nothing important. The password goes into a
+    # config file on the tmpfs (printf is a shell builtin), never onto the
+    # command line, where `ps` on the host would show it. Under memory pressure
+    # the least recently used keys (old rate-limit counters) are evicted.
     command:
       - sh
       - -c
-      - exec redis-server --requirepass "$$(cat /run/secrets/redis_password)" --save "" --appendonly no --protected-mode yes
+      - >-
+        umask 077 &&
+        printf 'requirepass %s\nsave ""\nappendonly no\nprotected-mode yes\nmaxmemory 256mb\nmaxmemory-policy allkeys-lru\n'
+        "$$(cat /run/secrets/redis_password)" > /data/redis.conf &&
+        exec redis-server /data/redis.conf
     secrets:
       - redis_password
     tmpfs:
-      - /data
+      # Owned by the image's redis user (uid 999), private to it.
+      - /data:uid=999,gid=1000,mode=0700
     networks:
       - backend
     healthcheck:
@@ -149,6 +168,8 @@ services:
   tor:
     <<: *hardening
     profiles: ['tor']
+    mem_limit: 256m
+    pids_limit: 64
     build:
       context: .
       dockerfile: infra/tor/Dockerfile

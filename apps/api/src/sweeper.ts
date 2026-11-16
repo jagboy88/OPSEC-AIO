@@ -2,6 +2,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BlobStore } from './blobs.js';
 import type { Pool } from './db.js';
 
+/** An upload must be finalized within this long, or it is deleted. */
+export const DROP_UPLOAD_DEADLINE_SECONDS = 6 * 3600;
+
 export interface SweepResult {
   notes: number;
   drops: number;
@@ -24,13 +27,16 @@ export async function sweep(pool: Pool, blobs?: BlobStore): Promise<SweepResult>
   const notes = await pool.query('DELETE FROM notes WHERE expires_at <= now()');
 
   await pool.query('DELETE FROM drop_downloads WHERE expires_at <= now()');
-  // Expired drops, plus drops whose download limit is used up and that have
-  // no download still in progress.
+  // Expired drops; uploads never finished within the deadline (they hold
+  // storage but can never be downloaded); and drops whose download limit is
+  // used up and that have no download still in progress.
   const drops = await pool.query<{ id: string }>(
     `DELETE FROM drops d WHERE d.expires_at <= now()
+       OR (NOT d.finalized AND d.created_at <= now() - make_interval(secs => $1))
        OR (d.max_downloads IS NOT NULL AND d.downloads >= d.max_downloads
            AND NOT EXISTS (SELECT 1 FROM drop_downloads t WHERE t.drop_id = d.id))
      RETURNING id`,
+    [DROP_UPLOAD_DEADLINE_SECONDS],
   );
   let orphanBlobs = 0;
   if (blobs) {

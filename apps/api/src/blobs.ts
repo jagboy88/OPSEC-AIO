@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
@@ -18,6 +18,8 @@ export interface BlobStore {
   remove(id: string): Promise<void>;
   /** Ids that currently have any stored data (for orphan cleanup). */
   list(): Promise<string[]>;
+  /** Free space for new chunks in bytes, or null if unknown. */
+  freeBytes?(): Promise<number | null>;
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{22}$/;
@@ -67,6 +69,15 @@ export class DiskBlobStore implements BlobStore {
       return (await readdir(this.root)).filter((n) => ID_RE.test(n));
     } catch {
       return [];
+    }
+  }
+
+  async freeBytes(): Promise<number | null> {
+    try {
+      const s = await statfs(this.root);
+      return s.bavail * s.bsize;
+    } catch {
+      return null;
     }
   }
 }

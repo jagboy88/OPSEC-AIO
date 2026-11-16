@@ -4,6 +4,7 @@ import {
   CHAT_BATCH_MAX,
   CHAT_MAILBOX_MAX,
   CHAT_MESSAGE_MAX_BYTES,
+  CHAT_PENDING_PAGE,
   RATE_LIMITS,
   type AckRequest,
   type IncomingMessage,
@@ -17,16 +18,24 @@ import {
 import type { Pool } from '../db.js';
 import { UUID_PATTERN, USERNAME_SCHEMA, b64Len, decodeB64, httpError, rl } from '../http.js';
 import type { Notifier } from '../notifier.js';
+import { ONION_KEY_PREFIX, rateLimitKey } from '../ratelimit.js';
 import { requireSession, sessionUser } from '../session.js';
 
 export interface MessageRouteOptions {
   pool: Pool;
   pepper: Uint8Array;
   notifier: Notifier;
+  /** Cap on queued ciphertext across all mailboxes (bytes). */
+  mailboxMaxBytes: number;
 }
 
-const PENDING_LIMIT = 500;
+const PENDING_LIMIT = CHAT_PENDING_PAGE;
+/** How long a measured mailbox total is reused before measuring again. */
+const MAILBOX_USAGE_TTL_MS = 30_000;
 const WS_AUTH_TIMEOUT_MS = 10_000;
+const WS_SESSION_RECHECK_MS = 5 * 60_000;
+const WS_MAX_PER_CLIENT = 20;
+const WS_MAX_PER_ONION = 500;
 
 /**
  * Message relay (docs/PLAN.md §4.1). The server is a mailbox, not an archive:
@@ -34,8 +43,23 @@ const WS_AUTH_TIMEOUT_MS = 10_000;
  * over WebSocket if the recipient is online, and deletes it on ACK.
  */
 export const messageRoutes: FastifyPluginAsync<MessageRouteOptions> = async (app, opts) => {
-  const { pool, pepper, notifier } = opts;
+  const { pool, pepper, notifier, mailboxMaxBytes } = opts;
   const session = requireSession(pool, pepper);
+
+  // Total queued ciphertext, measured at most every 30 s (octet_length reads
+  // the TOAST header, not the data) plus what this process queued since. Not
+  // pg_total_relation_size: the table file doesn't shrink after deletes, so it
+  // would stay "full" forever once it got there.
+  let usage = { bytes: 0, at: -Infinity };
+  async function mailboxBytes(): Promise<number> {
+    if (Date.now() - usage.at > MAILBOX_USAGE_TTL_MS) {
+      const { rows } = await pool.query<{ bytes: string }>(
+        'SELECT COALESCE(SUM(octet_length(ciphertext)), 0) AS bytes FROM mailbox',
+      );
+      usage = { bytes: Number(rows[0]!.bytes), at: Date.now() };
+    }
+    return usage.bytes;
+  }
 
   app.post<{ Body: SendMessagesRequest }>(
     '/messages',
@@ -86,6 +110,8 @@ export const messageRoutes: FastifyPluginAsync<MessageRouteOptions> = async (app
       if (users.some((u) => Number(u.queued) + msgs.length > CHAT_MAILBOX_MAX)) {
         throw httpError(507);
       }
+      const batchBytes = msgs.reduce((n, m) => n + m.bytes.length, 0);
+      if ((await mailboxBytes()) + batchBytes > mailboxMaxBytes) throw httpError(507);
 
       const toIds = msgs.map((m) => byName.get(m.to)!.id);
       const { rows } = await pool.query<{
@@ -100,6 +126,7 @@ export const messageRoutes: FastifyPluginAsync<MessageRouteOptions> = async (app
          RETURNING id, to_user, msg_type, ciphertext, created_at`,
         [req.user!.id, toIds, msgs.map((m) => m.type), msgs.map((m) => m.bytes)],
       );
+      usage.bytes += batchBytes;
       for (const r of rows) {
         const message: IncomingMessage = {
           id: r.id,
@@ -147,6 +174,8 @@ export const messageRoutes: FastifyPluginAsync<MessageRouteOptions> = async (app
     '/messages/ack',
     {
       preHandler: session,
+      // A full page of 500 UUIDs is ~20 KiB, over the 16 KiB default.
+      bodyLimit: 32 * 1024,
       schema: {
         body: {
           type: 'object',
@@ -173,32 +202,64 @@ export const messageRoutes: FastifyPluginAsync<MessageRouteOptions> = async (app
     },
   );
 
-  app.get('/ws', { websocket: true }, (socket) => {
+  // Open sockets per client bucket (this process). Onion visitors share one bucket.
+  const sockets = new Map<string, number>();
+
+  app.get('/ws', { websocket: true }, (socket, req) => {
+    const bucket = rateLimitKey(req, pepper);
+    const cap = bucket.startsWith(ONION_KEY_PREFIX) ? WS_MAX_PER_ONION : WS_MAX_PER_CLIENT;
+    const open = (sockets.get(bucket) ?? 0) + 1;
+    if (open > cap) {
+      socket.close(4429, 'too many connections');
+      return;
+    }
+    sockets.set(bucket, open);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const n = (sockets.get(bucket) ?? 1) - 1;
+      if (n > 0) sockets.set(bucket, n);
+      else sockets.delete(bucket);
+    };
+
     let unsubscribe: (() => void) | null = null;
     let authenticating = false;
+    let recheck: ReturnType<typeof setInterval> | undefined;
     const send = (m: WsServerMessage) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
     };
     const authTimer = setTimeout(() => socket.close(4401, 'unauthorized'), WS_AUTH_TIMEOUT_MS);
 
-    socket.on('message', async (raw: Buffer) => {
-      let msg: WsClientMessage;
+    const onMessage = async (raw: Buffer) => {
+      let parsed: unknown;
       try {
-        msg = JSON.parse(raw.toString('utf8')) as WsClientMessage;
+        parsed = JSON.parse(raw.toString('utf8'));
       } catch {
+        parsed = null;
+      }
+      // Anything that isn't {type: string, ...} is rejected (JSON `null` used
+      // to crash the process here).
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        typeof (parsed as { type?: unknown }).type !== 'string'
+      ) {
         send({ type: 'error', error: 'bad_request' });
         return;
       }
+      const msg = parsed as WsClientMessage;
       if (msg.type === 'ping') {
         send({ type: 'pong' });
         return;
       }
-      if (msg.type !== 'auth' || unsubscribe || authenticating) {
+      if (msg.type !== 'auth' || typeof msg.token !== 'string' || unsubscribe || authenticating) {
         send({ type: 'error', error: 'bad_request' });
         return;
       }
       authenticating = true;
-      const user = await sessionUser(pool, pepper, msg.token).catch(() => null);
+      const token = msg.token;
+      const user = await sessionUser(pool, pepper, token).catch(() => null);
       if (!user) {
         send({ type: 'error', error: 'unauthorized' });
         socket.close(4401, 'unauthorized');
@@ -212,12 +273,28 @@ export const messageRoutes: FastifyPluginAsync<MessageRouteOptions> = async (app
         unsubscribe();
         return;
       }
+      // Stop pushing once the session is logged out or expires.
+      recheck = setInterval(() => {
+        sessionUser(pool, pepper, token)
+          .then((still) => {
+            if (!still) socket.close(4401, 'session ended');
+          })
+          .catch(() => {});
+      }, WS_SESSION_RECHECK_MS);
       send({ type: 'ready' });
+    };
+
+    socket.on('message', (raw: Buffer) => {
+      // Never let a handler error become an unhandled rejection (which would
+      // take the whole process down): drop just this socket instead.
+      onMessage(raw).catch(() => socket.close(1011, 'error'));
     });
 
     socket.on('close', () => {
       clearTimeout(authTimer);
+      clearInterval(recheck);
       unsubscribe?.();
+      release();
     });
   });
 

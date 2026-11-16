@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@privacyresearch/libsignal-protocol-typescript@0.0.16':
+    hash: c31892026bbf9388622e14977b07202859a2b9791de3e23be4f54d6f970e4ade
+    path: patches/@privacyresearch__libsignal-protocol-typescript@0.0.16.patch
+
 importers:
 
   .:
@@ -135,7 +140,7 @@ importers:
         version: link:../types
       '@privacyresearch/libsignal-protocol-typescript':
         specifier: 0.0.16
-        version: 0.0.16
+        version: 0.0.16(patch_hash=c31892026bbf9388622e14977b07202859a2b9791de3e23be4f54d6f970e4ade)
 
   packages/crypto:
     dependencies:
@@ -2057,7 +2062,7 @@ snapshots:
     dependencies:
       ts-proto: 1.181.2
 
-  '@privacyresearch/libsignal-protocol-typescript@0.0.16':
+  '@privacyresearch/libsignal-protocol-typescript@0.0.16(patch_hash=c31892026bbf9388622e14977b07202859a2b9791de3e23be4f54d6f970e4ade)':
     dependencies:
       '@privacyresearch/curve25519-typescript': 0.0.12
       '@privacyresearch/libsignal-protocol-protobuf-ts': 0.0.9

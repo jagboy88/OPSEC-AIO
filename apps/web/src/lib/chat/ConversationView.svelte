@@ -9,6 +9,7 @@
   import { DISAPPEARING_TIMER_OPTIONS_SECONDS } from '@opsec-aio/types';
   import { downloadAttachment, uploadAttachment } from '#lib/drop.js';
   import { formatBytes, formatRemaining } from '#lib/format.js';
+  import GroupMembers from './GroupMembers.svelte';
   import SafetyNumber from './SafetyNumber.svelte';
   import { chat } from './state.svelte.js';
 
@@ -23,6 +24,7 @@
   let error = $state('');
   let blockedBy = $state<string | null>(null);
   let showSafety = $state(false);
+  let showMembers = $state(false);
   let showMenu = $state(false);
   let uploading = $state<number | null>(null);
   let downloading = $state<Record<string, number>>({});
@@ -55,6 +57,11 @@
     if (peer) void chat.client?.identity(peer).then((r) => (identity = r));
     else identity = undefined;
   });
+
+  /** A verified contact's key changed: sending stays blocked until the user accepts it. */
+  const keyBlocked = $derived(
+    blockedBy ?? (identity?.verified && identity.changed && conv?.peer ? conv.peer : null),
+  );
 
   async function run(action: () => Promise<unknown>) {
     error = '';
@@ -112,10 +119,11 @@
   }
 
   async function acceptKey() {
-    if (!blockedBy) return;
-    const u = blockedBy;
+    if (!keyBlocked) return;
+    const u = keyBlocked;
     await chat.client!.acceptNewIdentity(u);
     blockedBy = null;
+    identity = await chat.client!.identity(u);
     showSafety = true;
   }
 
@@ -186,6 +194,12 @@
               <button
                 type="button"
                 class="block w-full rounded px-3 py-2 text-left hover:bg-neutral-800"
+                onclick={() => ((showMembers = true), (showMenu = false))}
+                >{conv.admin === me ? 'Manage members' : 'Members'}</button
+              >
+              <button
+                type="button"
+                class="block w-full rounded px-3 py-2 text-left hover:bg-neutral-800"
                 onclick={() => ((showMenu = false), run(() => chat.client!.leaveGroup(convId)))}
                 >Leave group</button
               >
@@ -209,7 +223,7 @@
       </p>
     {/if}
 
-    {#if identity?.changed && conv.peer}
+    {#if identity?.changed && !identity.verified && conv.peer}
       <div
         class="flex flex-wrap items-center gap-2 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
         role="alert"
@@ -219,15 +233,25 @@
         >
       </div>
     {/if}
-    {#if blockedBy}
+    {#if keyBlocked}
       <div
         class="flex flex-wrap items-center gap-2 bg-red-500/10 px-4 py-2 text-sm text-red-300"
         role="alert"
+        data-testid="key-blocked"
       >
-        You had verified @{blockedBy}, but their key changed. Nothing was sent.
+        You had verified @{keyBlocked}, but their key changed. Sending to them is paused{blockedBy
+          ? ' and nothing was sent'
+          : ''}. They may have reinstalled, or someone may be intercepting: check with them another
+        way before you accept.
         <button type="button" class="underline" onclick={acceptKey}
           >Accept the new key and verify again</button
         >
+      </div>
+    {/if}
+
+    {#if showMembers && conv.kind === 'group'}
+      <div class="max-h-[75%] shrink-0 overflow-y-auto border-b border-neutral-800 p-4">
+        <GroupMembers {conv} onClose={() => (showMembers = false)} />
       </div>
     {/if}
 
@@ -297,7 +321,7 @@
     {#if error}<p role="alert" class="px-4 pb-1 text-sm text-red-400">{error}</p>{/if}
     {#if conv.left}
       <p class="border-t border-neutral-800 px-4 py-3 text-sm text-neutral-500">
-        You left this group.
+        You're no longer in this group.
       </p>
     {:else}
       <form class="flex items-end gap-2 border-t border-neutral-800 p-3" onsubmit={send}>

@@ -24,6 +24,9 @@ describe.skipIf(!url)('migrations (postgres)', () => {
       '002_note_size.sql',
       '003_drops.sql',
       '004_chat.sql',
+      '005_stored_bytes.sql',
+      '006_mailbox_limits.sql',
+      '007_prekey_handout.sql',
     ]);
     expect(await migrate(pool, MIGRATIONS_DIR)).toEqual([]);
   });

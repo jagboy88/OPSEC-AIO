@@ -54,7 +54,14 @@ cp .env.example .env
 # edit .env: SITE_ADDRESS=your.domain.example
 docker compose up -d --build
 docker compose ps                    # all services should become healthy
-curl -fsS https://your.domain.example/api/v1/ready
+curl -fsS https://your.domain.example/api/v1/health
+```
+
+The detailed readiness check (database, Redis, storage) is only reachable from inside the
+stack; from outside, `/api/v1/ready` is a 404:
+
+```sh
+docker compose exec api node -e "fetch('http://127.0.0.1:3000/api/v1/ready').then(r=>r.text()).then(console.log)"
 ```
 
 Caddy obtains and renews the TLS certificate automatically. Point the domain's A/AAAA records

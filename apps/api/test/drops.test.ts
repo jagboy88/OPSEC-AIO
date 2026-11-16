@@ -28,7 +28,7 @@ describe.skipIf(!url)('Drop API (postgres + disk)', () => {
   let n = 0;
   const ip = () => `10.1.${Math.floor(++n / 250)}.${n % 250}`;
 
-  async function makeApp(storageMax?: number) {
+  async function makeApp(storageMax?: number, minFree = 0) {
     const a = await buildApp({
       config: { logLevel: 'silent', trustProxyHops: 0 },
       probes: {},
@@ -37,6 +37,7 @@ describe.skipIf(!url)('Drop API (postgres + disk)', () => {
         tokenPepper: randomBytes(32),
         blobs,
         ...(storageMax !== undefined ? { dropStorageMaxBytes: storageMax } : {}),
+        dropMinFreeBytes: minFree,
       },
     });
     await a.ready();
@@ -72,8 +73,8 @@ describe.skipIf(!url)('Drop API (postgres + disk)', () => {
         ...body,
       },
     });
-  const putChunk = (id: string, i: number, data: Uint8Array, token: string) =>
-    app.inject({
+  const putChunk = (id: string, i: number, data: Uint8Array, token: string, a = app) =>
+    a.inject({
       method: 'PUT',
       url: `/api/v1/drop/${id}/chunk/${i}`,
       remoteAddress: ip(),
@@ -98,8 +99,8 @@ describe.skipIf(!url)('Drop API (postgres + disk)', () => {
       remoteAddress: ip(),
       headers: { authorization: `Bearer ${token}` },
     });
-  const del = (id: string, body: Record<string, string>) =>
-    app.inject({ method: 'DELETE', url: `/api/v1/drop/${id}`, remoteAddress: ip(), payload: body });
+  const del = (id: string, body: Record<string, string>, a = app) =>
+    a.inject({ method: 'DELETE', url: `/api/v1/drop/${id}`, remoteAddress: ip(), payload: body });
 
   /** Upload a complete drop with random chunk contents. */
   async function upload(chunkCount = 3, extra: Record<string, unknown> = {}) {
@@ -262,16 +263,66 @@ describe.skipIf(!url)('Drop API (postgres + disk)', () => {
     }
   });
 
-  it('refuses new uploads with a 507 when the storage cap would be exceeded', async () => {
-    const small = await makeApp(3 * FULL);
+  it('counts storage by bytes actually stored, so empty inits cannot lock out uploads', async () => {
+    const small = await makeApp(2 * FULL + 100);
     try {
-      expect((await init({ chunk_count: 2 }, small)).statusCode).toBe(201);
-      const full = await init({ chunk_count: 2 }, small);
+      // Many big inits that never upload anything reserve nothing.
+      for (let i = 0; i < 5; i++) {
+        expect((await init({ chunk_count: 2048 }, small)).statusCode).toBe(201);
+      }
+      const { drop_id: id, upload_token: t } = (await init({ chunk_count: 3 }, small)).json();
+      expect((await putChunk(id, 0, randomBytes(FULL), t, small)).statusCode).toBe(204);
+      // Re-sending the same chunk replaces it and is not counted twice.
+      expect((await putChunk(id, 0, randomBytes(FULL), t, small)).statusCode).toBe(204);
+      expect((await putChunk(id, 1, randomBytes(FULL), t, small)).statusCode).toBe(204);
+      const full = await putChunk(id, 2, randomBytes(FULL), t, small);
       expect(full.statusCode).toBe(507);
       expect(full.json()).toEqual({ error: 'storage_full' });
-      expect((await init({ chunk_count: 1 }, small)).statusCode).toBe(201);
+      const { rows } = await pool.query('SELECT stored_bytes FROM drops WHERE id = $1', [id]);
+      expect(rows[0]).toEqual({ stored_bytes: String(2 * FULL) });
+
+      // Still under the cap: a new init is allowed, and a small chunk fits.
+      const b = (await init({ chunk_count: 1 }, small)).json();
+      expect(
+        (await putChunk(b.drop_id, 0, randomBytes(50), b.upload_token, small)).statusCode,
+      ).toBe(204);
+      // Aborting the big upload frees its space.
+      expect((await del(id, { upload_token: t }, small)).statusCode).toBe(204);
+      expect((await putChunk(id, 2, randomBytes(FULL), t, small)).statusCode).toBe(404);
+      const c = (await init({ chunk_count: 2 }, small)).json();
+      expect(
+        (await putChunk(c.drop_id, 0, randomBytes(FULL), c.upload_token, small)).statusCode,
+      ).toBe(204);
     } finally {
       await small.close();
     }
+  });
+
+  it('refuses uploads when the disk is below its free-space floor', async () => {
+    const tight = await makeApp(undefined, Number.MAX_SAFE_INTEGER);
+    try {
+      const res = await init({ chunk_count: 1 }, tight);
+      expect(res.statusCode).toBe(507);
+    } finally {
+      await tight.close();
+    }
+  });
+
+  it('the sweeper deletes uploads that were never finalized within the deadline', async () => {
+    const { drop_id: stale, upload_token: t } = (await init({ chunk_count: 2 })).json();
+    expect((await putChunk(stale, 0, randomBytes(FULL), t)).statusCode).toBe(204);
+    const { drop_id: fresh } = (await init({ chunk_count: 2 })).json();
+    const { id: done } = await upload(1);
+    // Started 7 h ago (past the 6 h upload deadline), still 1 h before expiry.
+    await pool.query(
+      `UPDATE drops SET created_at = now() - interval '7 hours', expires_at = now() + interval '1 hour'
+       WHERE id = ANY($1)`,
+      [[stale, done]],
+    );
+    const r = await sweep(pool, blobs);
+    expect(r.drops).toBe(1);
+    const { rows } = await pool.query<{ id: string }>('SELECT id FROM drops ORDER BY id');
+    expect(rows.map((x) => x.id).sort()).toEqual([fresh, done].sort());
+    expect(await blobs.list()).not.toContain(stale);
   });
 });

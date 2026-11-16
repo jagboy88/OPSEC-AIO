@@ -32,8 +32,13 @@ export interface DropRouteOptions {
   pool: Pool;
   pepper: Uint8Array;
   blobs: BlobStore;
-  /** Soft cap on reserved ciphertext bytes across all live drops. */
+  /** Soft cap on stored ciphertext bytes across all drops. */
   storageMaxBytes: number;
+  /**
+   * Refuse new chunks when the blob volume has less free space than this, so
+   * Drop can never fill the disk that Postgres and the OS also live on.
+   */
+  minFreeBytes: number;
 }
 
 const MAX_CHUNK_CIPHERTEXT = DROP_CHUNK_BYTES + DROP_CHUNK_OVERHEAD;
@@ -80,7 +85,21 @@ function chunkLengthOk(n: number, chunkCount: number, length: number): boolean {
  * exact sizes or keys. Every "not available" answer is the same 404.
  */
 export const dropRoutes: FastifyPluginAsync<DropRouteOptions> = async (app, opts) => {
-  const { pool, pepper, blobs, storageMaxBytes } = opts;
+  const { pool, pepper, blobs, storageMaxBytes, minFreeBytes } = opts;
+
+  /**
+   * Would storing `extra` more bytes go over the storage cap or the disk's
+   * free-space floor? Soft limit: concurrent uploads can overshoot it by a few
+   * chunks, which the free-space floor absorbs.
+   */
+  async function storageFull(extra: number): Promise<boolean> {
+    const { rows } = await pool.query<{ used: string }>(
+      'SELECT COALESCE(SUM(stored_bytes), 0) AS used FROM drops',
+    );
+    if (Number(rows[0]!.used) + extra > storageMaxBytes) return true;
+    const free = (await blobs.freeBytes?.()) ?? null;
+    return free !== null && free - extra < minFreeBytes;
+  }
 
   app.addContentTypeParser(
     'application/octet-stream',
@@ -129,13 +148,9 @@ export const dropRoutes: FastifyPluginAsync<DropRouteOptions> = async (app, opts
         throw badRequest();
       }
 
-      // Storage cap: reserve worst-case space for every live drop.
-      const reserveBytes = req.body.chunk_count * MAX_CHUNK_CIPHERTEXT;
-      const { rows: used } = await pool.query<{ reserved: string }>(
-        'SELECT COALESCE(SUM(chunk_count::bigint), 0) * $1 AS reserved FROM drops WHERE expires_at > now()',
-        [MAX_CHUNK_CIPHERTEXT],
-      );
-      if (Number(used[0]!.reserved) + reserveBytes > storageMaxBytes) throw httpError(507);
+      // Storage is counted chunk by chunk as it arrives (see the PUT below);
+      // refuse early only when it is already full.
+      if (await storageFull(0)) throw httpError(507);
 
       const uploadToken = randomToken();
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -191,7 +206,17 @@ export const dropRoutes: FastifyPluginAsync<DropRouteOptions> = async (app, opts
       const body = req.body;
       if (!Buffer.isBuffer(body) || req.params.n >= drop.chunk_count) throw badRequest();
       if (!chunkLengthOk(req.params.n, drop.chunk_count, body.length)) throw badRequest();
+      // A retried chunk replaces the old one: count only the difference.
+      const delta = body.length - ((await blobs.size(req.params.id, req.params.n)) ?? 0);
+      if (delta > 0 && (await storageFull(delta))) throw httpError(507);
       await blobs.put(req.params.id, req.params.n, body);
+      // Clamped: two racing uploads of the same chunk must not push the count
+      // past what the drop can hold (finalize recounts exactly anyway).
+      await pool.query(
+        `UPDATE drops SET stored_bytes = LEAST(GREATEST(stored_bytes + $2, 0), chunk_count::bigint * $3)
+         WHERE id = $1`,
+        [req.params.id, delta, MAX_CHUNK_CIPHERTEXT],
+      );
       return reply.code(204).send();
     },
   );
@@ -225,7 +250,8 @@ export const dropRoutes: FastifyPluginAsync<DropRouteOptions> = async (app, opts
         }
         const deletionToken = randomToken();
         await client.query(
-          'UPDATE drops SET finalized = true, size = $2, deletion_token_hash = $3 WHERE id = $1',
+          `UPDATE drops SET finalized = true, size = $2, stored_bytes = $2, deletion_token_hash = $3
+           WHERE id = $1`,
           [req.params.id, total, hashToken(deletionToken, pepper)],
         );
         await client.query('COMMIT');

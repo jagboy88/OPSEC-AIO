@@ -19,6 +19,13 @@ export interface KeyRouteOptions {
 
 const keyId = { type: 'integer', minimum: 0, maximum: 0x7fffffff } as const;
 
+/**
+ * One-time prekeys handed out per user per hour. Beyond this, bundles carry no
+ * one-time prekey, so a stranger cannot drain someone's supply (forcing every
+ * new contact onto the signed prekey alone) and yet cannot block contact either.
+ */
+export const OTPK_HANDOUTS_PER_HOUR = 30;
+
 /** Prekey distribution for X3DH (docs/PLAN.md §4.1). Only signed-in users can fetch bundles. */
 export const keyRoutes: FastifyPluginAsync<KeyRouteOptions> = async (app, { pool, pepper }) => {
   app.addHook('preHandler', requireSession(pool, pepper));
@@ -53,14 +60,26 @@ export const keyRoutes: FastifyPluginAsync<KeyRouteOptions> = async (app, { pool
            ORDER BY created_at DESC, key_id DESC LIMIT 1`,
           [u.id],
         );
-        // Each one-time prekey is handed out exactly once.
-        const { rows: otpk } = await client.query<{ key_id: number; pub: Buffer }>(
-          `DELETE FROM one_time_prekeys WHERE (user_id, key_id) = (
-             SELECT user_id, key_id FROM one_time_prekeys WHERE user_id = $1
-             ORDER BY key_id LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING key_id, pub`,
+        const { rows: win } = await client.query<{ n: number }>(
+          `UPDATE users SET
+             otpk_window_count = CASE WHEN otpk_window_start > now() - interval '1 hour'
+                                      THEN otpk_window_count + 1 ELSE 1 END,
+             otpk_window_start = CASE WHEN otpk_window_start > now() - interval '1 hour'
+                                      THEN otpk_window_start ELSE now() END
+           WHERE id = $1 RETURNING otpk_window_count AS n`,
           [u.id],
         );
+        // Each one-time prekey is handed out exactly once.
+        const { rows: otpk } =
+          win[0]!.n > OTPK_HANDOUTS_PER_HOUR
+            ? { rows: [] }
+            : await client.query<{ key_id: number; pub: Buffer }>(
+                `DELETE FROM one_time_prekeys WHERE (user_id, key_id) = (
+                   SELECT user_id, key_id FROM one_time_prekeys WHERE user_id = $1
+                   ORDER BY key_id LIMIT 1 FOR UPDATE SKIP LOCKED)
+                 RETURNING key_id, pub`,
+                [u.id],
+              );
         await client.query('COMMIT');
         const s = spk[0];
         if (!s) throw httpError(404);

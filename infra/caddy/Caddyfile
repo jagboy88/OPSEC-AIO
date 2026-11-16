@@ -4,9 +4,14 @@
 	# Never try to modify the host trust store (only relevant to `localhost`).
 	skip_install_trust
 	# No access logs anywhere (Caddy writes none unless a `log` directive is set
-	# in a site block). Only errors from Caddy itself are emitted.
+	# in a site block), and no HTTP error logs either: when a handler fails
+	# (e.g. the API is restarting) `http.log.error` would record the client IP
+	# and the full URI, including note/drop ids. `http.stdlib` can carry client
+	# addresses from TLS handshake errors. Caddy's own errors (certificates,
+	# config) are still logged.
 	log {
 		level ERROR
+		exclude http.log.error http.log.access http.stdlib
 	}
 	servers {
 		protocols h1 h2 h3
@@ -26,6 +31,15 @@
 		X-Robots-Tag "noindex, nofollow, noarchive"
 		-Server
 		-Via
+	}
+}
+
+# Readiness (which backend is down; hits the database) is for the container
+# healthcheck only. Answer exactly like any unknown API path.
+(internal_api) {
+	@internal path /api/v1/ready
+	respond @internal `{"error":"not_found"}` 404 {
+		close
 	}
 }
 
@@ -52,6 +66,7 @@
 	header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 
 	handle /api/* {
+		import internal_api
 		# API responses carry tokens: never compress them (BREACH-style attacks).
 		# The API sets its own `default-src 'none'` CSP.
 		reverse_proxy api:3000 {
@@ -79,6 +94,7 @@ http://:8081 {
 	import security_headers
 
 	handle /api/* {
+		import internal_api
 		reverse_proxy api:3000 {
 			# Every onion visitor arrives from 127.0.0.1; tell the API so it can
 			# rate-limit onion traffic as one (larger) bucket.

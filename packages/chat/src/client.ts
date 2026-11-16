@@ -26,7 +26,14 @@ import {
 import { abToB64, b64ToAB, binToBytes, bytesToBin, toAB } from './bytes.js';
 import { safetyNumber } from './fingerprint.js';
 import type { EncryptedKV } from './kv.js';
-import { decodePayload, encodePayload, type FileRef, type Payload } from './payload.js';
+import {
+  PayloadTooLargeError,
+  TEXT_MAX_CHARS,
+  decodePayload,
+  encodePayload,
+  type FileRef,
+  type Payload,
+} from './payload.js';
 import { ChatServerError, type ChatServer } from './server.js';
 import { SignalStore, type IdentityRecord } from './signal-store.js';
 
@@ -47,6 +54,10 @@ export interface Conversation {
   unread: number;
   /** I left this group (read-only). */
   left?: boolean;
+  /** Group creator: the only member who may change membership or the name. */
+  admin?: string;
+  /** Per sender: timestamp of the last control message applied (replay guard). */
+  controlTs?: Record<string, number>;
 }
 
 export interface StoredMessage {
@@ -112,6 +123,7 @@ interface AccountState {
 const DEVICE_ID = 1;
 const MAX_MESSAGES_PER_CONVERSATION = 2000;
 const SEEN_IDS_KEPT = 1000;
+const SEEN_PAYLOADS_PER_SENDER = 2000;
 const PREKEY_REFILL_BELOW = 20;
 const SIGNED_PREKEY_ROTATE_MS = 7 * 24 * 3600 * 1000;
 const FINGERPRINT_ITERATIONS = 5200;
@@ -149,6 +161,8 @@ export class ChatClient {
   private readonly convs = new Map<string, Conversation>();
   private readonly msgs = new Map<string, StoredMessage[]>();
   private seen: string[] = [];
+  /** Per sender: recently applied payload ids, so a replayed message is ignored. */
+  private seenPayloads: Record<string, string[]> = {};
   private readonly dirty = new Set<string>();
   private chain: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<() => void>();
@@ -247,6 +261,8 @@ export class ChatClient {
       client.msgs.set(c.id, (await kv.getJSON<StoredMessage[]>(`messages:${c.id}`)) ?? []);
     }
     client.seen = (await kv.getJSON<string[]>('seen')) ?? [];
+    client.seenPayloads = (await kv.getJSON<Record<string, string[]>>('seen-payloads')) ?? {};
+    client.dropExpired(); // messages that expired while the app was closed
     await client.login();
     return client;
   }
@@ -326,6 +342,7 @@ export class ChatClient {
     }
     this.dirty.clear();
     await this.kv.setJSON('seen', this.seen);
+    await this.kv.setJSON('seen-payloads', this.seenPayloads);
   }
 
   // ── Reading state ──────────────────────────────────────────────────────────
@@ -339,7 +356,25 @@ export class ChatClient {
   }
 
   messages(convId: string): StoredMessage[] {
-    return [...(this.msgs.get(convId) ?? [])];
+    const now = this.now();
+    return (this.msgs.get(convId) ?? []).filter(
+      (m) => m.expiresAt === undefined || m.expiresAt > now,
+    );
+  }
+
+  /** Remove expired messages from memory (persisted on the next write). */
+  private dropExpired(): number {
+    const now = this.now();
+    let removed = 0;
+    for (const [id, list] of this.msgs) {
+      const kept = list.filter((m) => m.expiresAt === undefined || m.expiresAt > now);
+      if (kept.length !== list.length) {
+        removed += list.length - kept.length;
+        this.msgs.set(id, kept);
+        this.dirty.add(id);
+      }
+    }
+    return removed;
   }
 
   // ── Conversations ──────────────────────────────────────────────────────────
@@ -406,6 +441,7 @@ export class ChatClient {
         timer: DISAPPEARING_DEFAULT_SECONDS,
         updatedAt: this.now(),
         unread: 0,
+        admin: this.username,
       };
       await this.sendPayload(conv, {
         v: 1,
@@ -441,6 +477,59 @@ export class ChatClient {
     });
   }
 
+  /**
+   * Change a group's members (creator only). Everyone in the old *and* new
+   * list is told, so removed members know they're out; each change shows up
+   * as an explicit notice on every member's device.
+   */
+  async updateGroupMembers(convId: string, add: string[], remove: string[]): Promise<void> {
+    const norm = (l: string[]) =>
+      [...new Set(l.map((m) => m.trim().toLowerCase().replace(/^@/, '')))].filter(Boolean);
+    const toAdd = norm(add);
+    const toRemove = norm(remove);
+    for (const m of toAdd) {
+      if (!USERNAME_PATTERN.test(m)) throw new ChatInputError(`@${m} is not a valid username.`);
+      if (!(await this.authed((t) => this.server.userExists(t, m)))) {
+        throw new ChatInputError(`No user called @${m}.`);
+      }
+    }
+    await this.lock(async () => {
+      const conv = this.mustConv(convId);
+      if (conv.kind !== 'group' || conv.left) throw new ChatInputError('Not an active group.');
+      if (conv.admin !== this.username) {
+        throw new ChatInputError('Only the person who created the group can change its members.');
+      }
+      if (toRemove.includes(this.username)) {
+        throw new ChatInputError('Use “Leave group” to leave.');
+      }
+      const next = [...new Set([...conv.members.filter((m) => !toRemove.includes(m)), ...toAdd])];
+      if (next.length > GROUP_MAX_MEMBERS) {
+        throw new ChatInputError(`Groups have at most ${GROUP_MAX_MEMBERS} members.`);
+      }
+      if (next.length < 2) throw new ChatInputError('A group needs at least one other member.');
+      const ts = this.now();
+      const notify: Conversation = {
+        ...conv,
+        members: [...new Set([...conv.members, ...next])],
+      };
+      await this.sendPayload(notify, {
+        v: 1,
+        id: randomId(),
+        ts,
+        kind: 'group',
+        group: conv.group!,
+        name: conv.title,
+        members: next,
+      });
+      const added = next.filter((m) => !conv.members.includes(m));
+      const removed = conv.members.filter((m) => !next.includes(m));
+      conv.members = next;
+      for (const m of added) this.notice(conv, `You added @${m}.`);
+      for (const m of removed) this.notice(conv, `You removed @${m}.`);
+      await this.persist();
+    });
+  }
+
   /** Remove a conversation and its messages from this device only. */
   async deleteConversation(convId: string): Promise<void> {
     await this.lock(async () => {
@@ -462,7 +551,9 @@ export class ChatClient {
   async sendText(convId: string, text: string): Promise<StoredMessage> {
     const body = text.trim();
     if (!body) throw new ChatInputError('Message is empty.');
-    if (body.length > 8000) throw new ChatInputError('Messages are limited to 8000 characters.');
+    if (body.length > TEXT_MAX_CHARS) {
+      throw new ChatInputError(`Messages are limited to ${TEXT_MAX_CHARS} characters.`);
+    }
     return this.lock(async () => {
       const conv = this.mustConv(convId);
       const p: Payload = {
@@ -571,7 +662,15 @@ export class ChatClient {
   }
 
   private async sendPayload(conv: Conversation, p: Payload): Promise<void> {
-    const plaintext = toAB(encodePayload(p));
+    let plaintext: ArrayBuffer;
+    try {
+      plaintext = toAB(encodePayload(p));
+    } catch (e) {
+      if (e instanceof PayloadTooLargeError) {
+        throw new ChatInputError('This message is too long to send. Please shorten it.');
+      }
+      throw e;
+    }
     const out: OutgoingMessage[] = [];
     for (const to of this.recipients(conv)) {
       const cipher = await this.cipherFor(to);
@@ -638,8 +737,15 @@ export class ChatClient {
 
   /** Fetch and process everything waiting on the server. Returns how many were new. */
   async sync(): Promise<number> {
-    const pending = await this.authed((t) => this.server.pending(t));
-    return this.receive(pending);
+    // The server returns at most one page (500) per call; keep going until the
+    // mailbox is empty (bounded, in case something keeps refilling it).
+    let total = 0;
+    for (let page = 0; page < 50; page++) {
+      const pending = await this.authed((t) => this.server.pending(t));
+      if (!pending.length) break;
+      total += await this.receive(pending);
+    }
+    return total;
   }
 
   /** Process messages (from sync or WebSocket push), then ACK them so the server deletes them. */
@@ -668,6 +774,7 @@ export class ChatClient {
 
   private async processOne(m: IncomingMessage): Promise<void> {
     if (!m.from) return; // sender deleted their account
+    if (!USERNAME_PATTERN.test(m.from)) return; // never trust the relay's labels blindly
     const cipher = new SessionCipher(this.store, new SignalProtocolAddress(m.from, DEVICE_ID));
     let plain: ArrayBuffer;
     try {
@@ -687,7 +794,26 @@ export class ChatClient {
       this.notice(this.ensureDirect(m.from), `@${m.from} sent a message this version can't show.`);
       return;
     }
+    // Replay guard: a payload id is applied at most once per sender, even if
+    // the server re-delivers an old first-contact message after a session reset.
+    const seen = (this.seenPayloads[m.from] ??= []);
+    if (seen.includes(p.id)) return;
+    seen.push(p.id);
+    if (seen.length > SEEN_PAYLOADS_PER_SENDER)
+      seen.splice(0, seen.length - SEEN_PAYLOADS_PER_SENDER);
     this.apply(p, m.from);
+  }
+
+  /**
+   * True (and records it) unless this control message is older than the last
+   * one applied from `from`. Exact replays are already caught by payload id;
+   * this stops an old timer/membership change from being re-applied later.
+   */
+  private freshControl(conv: Conversation, from: string, ts: number): boolean {
+    const last = conv.controlTs?.[from];
+    if (last !== undefined && ts < last) return false;
+    conv.controlTs = { ...conv.controlTs, [from]: ts };
+    return true;
   }
 
   private memberGroup(gid: string, from: string): Conversation | null {
@@ -721,7 +847,7 @@ export class ChatClient {
       }
       case 'timer': {
         const conv = p.group ? this.memberGroup(p.group, from) : this.ensureDirect(from);
-        if (!conv) return;
+        if (!conv || !this.freshControl(conv, from, p.ts)) return;
         conv.timer = p.timer;
         this.notice(
           conv,
@@ -734,11 +860,34 @@ export class ChatClient {
       case 'group': {
         const existing = this.convs.get(groupId(p.group));
         if (existing) {
-          if (!existing.members.includes(from)) return;
-          existing.title = p.name;
+          // Only the creator may change membership or the name, and every
+          // change is spelled out. (Groups from before admins existed have no
+          // admin: their membership is frozen.)
+          if (!existing.admin || from !== existing.admin) return;
+          // Once out of a group, only being added back by the creator counts.
+          if (existing.left && !p.members.includes(this.username)) return;
+          if (!this.freshControl(existing, from, p.ts)) return;
+          const added = p.members.filter((m) => !existing.members.includes(m));
+          const removed = existing.members.filter((m) => !p.members.includes(m));
+          if (p.name !== existing.title) {
+            this.notice(existing, `@${from} renamed the group to “${p.name}”.`);
+            existing.title = p.name;
+          }
+          for (const m of added) {
+            this.notice(
+              existing,
+              m === this.username ? `@${from} added you back.` : `@${from} added @${m}.`,
+            );
+          }
+          for (const m of removed) {
+            this.notice(
+              existing,
+              m === this.username ? `@${from} removed you.` : `@${from} removed @${m}.`,
+            );
+          }
           existing.members = p.members;
-          if (!p.members.includes(this.username)) existing.left = true;
-          this.notice(existing, `@${from} updated the group.`);
+          if (p.members.includes(this.username)) delete existing.left;
+          else existing.left = true;
           return;
         }
         if (!p.members.includes(this.username) || !p.members.includes(from)) return;
@@ -751,6 +900,8 @@ export class ChatClient {
           timer: DISAPPEARING_DEFAULT_SECONDS,
           updatedAt: now,
           unread: 0,
+          admin: from,
+          controlTs: { [from]: p.ts },
         };
         this.convs.set(conv.id, conv);
         this.msgs.set(conv.id, []);
@@ -759,7 +910,7 @@ export class ChatClient {
       }
       case 'leave': {
         const conv = this.memberGroup(p.group, from);
-        if (!conv) return;
+        if (!conv || !this.freshControl(conv, from, p.ts)) return;
         conv.members = conv.members.filter((m) => m !== from);
         this.notice(conv, `@${from} left the group.`);
         return;
@@ -768,11 +919,11 @@ export class ChatClient {
   }
 
   private onIdentityChanged(username: string) {
-    const conv = this.ensureDirect(username);
-    this.notice(
-      conv,
-      `Your safety number with @${username} changed. Verify it before sharing anything sensitive.`,
-    );
+    const text = `Your safety number with @${username} changed. Verify it before sharing anything sensitive.`;
+    this.notice(this.ensureDirect(username), text);
+    for (const c of this.convs.values()) {
+      if (c.kind === 'group' && !c.left && c.members.includes(username)) this.notice(c, text);
+    }
   }
 
   // ── Disappearing messages ──────────────────────────────────────────────────
@@ -786,7 +937,8 @@ export class ChatClient {
       let changed = conv.unread !== 0;
       conv.unread = 0;
       for (const m of this.msgs.get(convId) ?? []) {
-        if (m.from !== this.username && m.timer && m.readAt === undefined) {
+        const expired = m.expiresAt !== undefined && m.expiresAt <= now;
+        if (m.from !== this.username && m.timer && m.readAt === undefined && !expired) {
           // The 2 × timer ceiling only bounds *unread* messages (plan §4.1);
           // once read, the reader gets the full timer from now.
           m.readAt = now;
@@ -854,10 +1006,23 @@ export class ChatClient {
     );
   }
 
-  async setVerified(username: string, verified: boolean): Promise<void> {
+  /**
+   * Mark a contact verified (or not). Pass the safety number the user actually
+   * compared: if the key changed in the meantime, nothing is marked.
+   */
+  async setVerified(username: string, verified: boolean, comparedNumber?: string): Promise<void> {
     await this.lock(async () => {
       const rec = await this.store.getIdentity(username);
       if (!rec) throw new ChatInputError('No safety number yet: exchange a message first.');
+      if (
+        verified &&
+        comparedNumber !== undefined &&
+        comparedNumber !== (await this.safetyNumber(username))
+      ) {
+        throw new ChatInputError(
+          'The safety number changed while you were checking it. Compare it again.',
+        );
+      }
       await this.store.putIdentity(username, { ...rec, verified, changed: false });
     });
   }

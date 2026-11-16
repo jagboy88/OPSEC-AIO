@@ -90,8 +90,14 @@ say "Generating secrets (kept if they already exist)"
 
 if [ ! -f .env ]; then
   if [ -z "$DOMAIN" ]; then
-    IP="$(curl -4fsS --max-time 10 https://api.ipify.org || true)"
-    [ -n "$IP" ] || IP="$(ip -4 route get 1.1.1.1 | awk '{for (i=1;i<NF;i++) if ($i=="src") print $(i+1)}')"
+    # The address on this server's own default route (no packet is sent). Only
+    # if that is private (the server is behind NAT) ask a public IP service.
+    IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") print $(i+1)}')"
+    case "$IP" in
+      "" | 10.* | 127.* | 192.168.* | 169.254.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | \
+        100.6[4-9].* | 100.[7-9][0-9].* | 100.1[01][0-9].* | 100.12[0-7].*)
+        IP="$(curl -4fsS --max-time 10 https://api.ipify.org || true)" ;;
+    esac
     [ -n "$IP" ] || die "Could not detect this server's public IPv4. Re-run with your domain: bash install.sh your.domain"
     DOMAIN="${IP//./-}.sslip.io"
   fi
@@ -122,7 +128,7 @@ docker compose up -d --build --wait --wait-timeout 300
 say "Checking the site over HTTPS (certificate can take up to a minute)"
 ok=""
 for _ in $(seq 1 24); do
-  if curl -fsS --max-time 10 "https://$DOMAIN/api/v1/ready" 2>/dev/null | grep -q '"status":"ok"'; then
+  if curl -fsS --max-time 10 "https://$DOMAIN/api/v1/health" 2>/dev/null | grep -q '"status":"ok"'; then
     ok=1
     break
   fi
@@ -143,10 +149,12 @@ Build hash of the web app now being served (compare with CI's published hash):
 
 Secrets:   $APP_DIR/secrets/   (back these up offline; never commit them)
 Settings:  $APP_DIR/.env
-Update:    cd $APP_DIR && git pull && docker compose up -d --build
+Update:    sudo bash $APP_DIR/scripts/update.sh
 Logs:      cd $APP_DIR && docker compose logs --tail 50
 
 Next: set up an SSH key and turn off password logins (see docs/DEPLOY.md).
+Tip: a *.sslip.io address works, but whoever runs sslip.io's DNS could point it
+elsewhere. For real use, put the site on your own domain (docs/DEPLOY.md §1).
 EOF
 if [ -f /var/run/reboot-required ]; then
   warn "System updates need a reboot. Run: reboot   (the site starts again automatically)"

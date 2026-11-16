@@ -45,6 +45,8 @@ describe('onion traffic', () => {
       rateLimitKey({ headers: { 'x-opsec-via': 'onion' }, ip } as never, pepper, t);
     expect(onion('127.0.0.1')).toBe(onion('10.0.0.9'));
     expect(onion('127.0.0.1')).toMatch(/^onion:\d+$/);
-    expect(rateLimitKey({ headers: {}, ip: '127.0.0.1' } as never, pepper, t)).not.toMatch(/^onion:/);
+    expect(rateLimitKey({ headers: {}, ip: '127.0.0.1' } as never, pepper, t)).not.toMatch(
+      /^onion:/,
+    );
   });
 });

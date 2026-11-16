@@ -27,7 +27,8 @@ export const ONION_KEY_PREFIX = 'onion:';
  * and those requests share one daily bucket with larger limits (see rl()).
  */
 export function rateLimitKey(req: FastifyRequest, pepper: Uint8Array, now = Date.now()): string {
-  if (req.headers['x-opsec-via'] === 'onion') return `${ONION_KEY_PREFIX}${Math.floor(now / DAY_MS)}`;
+  if (req.headers['x-opsec-via'] === 'onion')
+    return `${ONION_KEY_PREFIX}${Math.floor(now / DAY_MS)}`;
   return clientKey(req.ip, pepper, now);
 }
 

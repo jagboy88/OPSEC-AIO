@@ -3,6 +3,33 @@
 Target: one Linux VPS running Docker Compose. Everything (TLS, web app, API, Postgres, Redis,
 file blobs) runs on that one machine.
 
+## Quick install (Ubuntu 24.04 / 26.04 LTS)
+
+On a fresh server, as root:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jagboy88/OPSEC-AIO/main/scripts/install-vps.sh -o install.sh
+bash install.sh                    # free address: <your-ip>.sslip.io
+bash install.sh chat.example.com   # or your own domain (point its A record here first)
+```
+
+It runs system updates, turns on automatic security updates, sets up a firewall
+(SSH/80/443 only), fail2ban and swap, installs Docker, generates secrets, sizes Drop
+storage to the disk, builds and starts the stack, and checks HTTPS. It is safe to
+re-run. The manual steps below are what it automates, plus what it can't do for you
+(SSH keys, disk encryption).
+
+### After installing: SSH key login
+
+1. Create an SSH key on your device (e.g. Termius: Keychain → Generate key → Ed25519)
+   and add its public key to `/root/.ssh/authorized_keys` on the server.
+2. Log in again **using the key** and confirm it works.
+3. Only then turn off password logins:
+   ```sh
+   printf 'PasswordAuthentication no\nPermitRootLogin prohibit-password\n' > /etc/ssh/sshd_config.d/99-opsec.conf
+   systemctl reload ssh
+   ```
+
 ## 1. Host preparation
 
 1. **Full-disk encryption (LUKS).** Pick a provider that supports custom ISOs or encrypted

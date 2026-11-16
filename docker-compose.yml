@@ -26,6 +26,7 @@ services:
     read_only: true
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      ONION_ADDRESS: ${ONION_ADDRESS:-}
     ports:
       - '${HTTP_PORT:-80}:80'
       - '${HTTPS_PORT:-443}:443'
@@ -142,6 +143,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # Tor onion service (opt-in: COMPOSE_PROFILES=tor, set by scripts/enable-tor.sh).
+  # Shares Caddy's network namespace so it can reach Caddy's localhost-only
+  # onion site; it is not reachable from anywhere else.
+  tor:
+    <<: *hardening
+    profiles: ['tor']
+    build:
+      context: .
+      dockerfile: infra/tor/Dockerfile
+    network_mode: service:caddy
+    read_only: true
+    volumes:
+      # Holds the onion service's private key (= its address). Back it up.
+      - tor_data:/var/lib/tor
+    tmpfs:
+      - /tmp
+    depends_on:
+      - caddy
+
 networks:
   edge: {}
   # No route to the internet: Postgres and Redis are reachable only by the API.
@@ -153,6 +173,7 @@ volumes:
   caddy_config: {}
   pgdata: {}
   blobs: {}
+  tor_data: {}
 
 secrets:
   postgres_password:

@@ -1,5 +1,5 @@
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Redis } from 'ioredis';
 import { blake2b, toBase64Url, utf8Encode } from '@opsec-aio/crypto';
 
@@ -17,6 +17,20 @@ export function clientKey(ip: string, pepper: Uint8Array, now = Date.now()): str
   return toBase64Url(blake2b(utf8Encode(subject), 16, pepper));
 }
 
+/** Bucket key prefix for traffic that arrived through the Tor onion service. */
+export const ONION_KEY_PREFIX = 'onion:';
+
+/**
+ * Onion visitors all reach Caddy from 127.0.0.1, so they can't be told apart
+ * by IP. Caddy's onion site sets `X-Opsec-Via: onion` (the clearnet site
+ * strips any client-supplied value, and the API is not reachable directly),
+ * and those requests share one daily bucket with larger limits (see rl()).
+ */
+export function rateLimitKey(req: FastifyRequest, pepper: Uint8Array, now = Date.now()): string {
+  if (req.headers['x-opsec-via'] === 'onion') return `${ONION_KEY_PREFIX}${Math.floor(now / DAY_MS)}`;
+  return clientKey(req.ip, pepper, now);
+}
+
 export interface RateLimitDeps {
   /** Shared store across API replicas. Falls back to in-process memory when absent (tests). */
   redis?: Redis;
@@ -32,7 +46,7 @@ export async function registerRateLimit(app: FastifyInstance, deps: RateLimitDep
     // If Redis is down, serve requests rather than fail closed: availability of
     // reading a note matters more than perfect abuse protection.
     skipOnError: true,
-    keyGenerator: (req) => clientKey(req.ip, deps.pepper),
+    keyGenerator: (req) => rateLimitKey(req, deps.pepper),
     errorResponseBuilder: (_req, ctx) =>
       Object.assign(new Error('rate limited'), { statusCode: ctx.statusCode }),
   });

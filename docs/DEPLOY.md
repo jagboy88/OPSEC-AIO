@@ -113,7 +113,29 @@ from the tagged source and compare.
 docker compose exec caddy cat /etc/caddy/build-manifest.json | head -3
 ```
 
-## 9. Tor onion service (Phase 4)
+## 9. Tor onion service
 
-Planned: a `tor` container that publishes the Caddy service as a v3 onion address, with an
-`Onion-Location` header on clearnet responses.
+On the server:
+
+```sh
+bash /opt/opsec-aio/scripts/enable-tor.sh
+```
+
+It enables the `tor` Compose profile, waits for Tor to generate the service's key,
+prints the `.onion` address, and makes the clearnet site send an `Onion-Location`
+header so Tor Browser offers the onion version. Back up the key as the script
+explains: the key _is_ the address.
+
+How it fits together:
+
+- The `tor` container shares Caddy's network namespace and forwards the onion's
+  port 80 to a second Caddy site on `127.0.0.1:8081`, which is not published
+  anywhere else.
+- The onion site is plain HTTP (Tor already encrypts and authenticates it end to end;
+  Tor Browser treats `.onion` as a secure context) with the same CSP and headers,
+  minus HSTS.
+- Every onion visitor reaches Caddy from `127.0.0.1`, so the API rate-limits onion
+  traffic as one shared bucket with 20× the per-IP limits. Caddy marks onion
+  requests with `X-Opsec-Via: onion` and strips that header from clearnet requests.
+- Tor Browser must be on security level **Standard**: "Safer" disables WebAssembly,
+  which the encryption needs (the site explains this if it happens).

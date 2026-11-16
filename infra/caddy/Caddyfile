@@ -13,13 +13,9 @@
 	}
 }
 
-{$SITE_ADDRESS:localhost} {
-	tls {
-		protocols tls1.3
-	}
-
+# Headers shared by the clearnet and onion sites.
+(security_headers) {
 	header {
-		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		X-Frame-Options "DENY"
@@ -31,22 +27,66 @@
 		-Server
 		-Via
 	}
+}
+
+# The static web app (SPA) with its generated CSP.
+(web_app) {
+	# Generated at build time: strict CSP with hashes of the only inline scripts.
+	import /etc/caddy/csp.caddy
+	root * /srv
+	@immutable path /_app/immutable/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+	@mutable not path /_app/immutable/*
+	header @mutable Cache-Control "no-store"
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+}
+
+# ── Clearnet site ────────────────────────────────────────────────────────────
+{$SITE_ADDRESS:localhost} {
+	tls {
+		protocols tls1.3
+	}
+	import security_headers
+	header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+
 	handle /api/* {
 		# API responses carry tokens: never compress them (BREACH-style attacks).
 		# The API sets its own `default-src 'none'` CSP.
-		reverse_proxy api:3000
+		reverse_proxy api:3000 {
+			# Only the onion site may claim onion origin.
+			header_up -X-Opsec-Via
+		}
 	}
 
 	handle {
-		# Generated at build time: strict CSP with hashes of the only inline scripts.
-		import /etc/caddy/csp.caddy
-		root * /srv
-		@immutable path /_app/immutable/*
-		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@mutable not path /_app/immutable/*
-		header @mutable Cache-Control "no-store"
-		encode zstd gzip
-		try_files {path} /index.html
-		file_server
+		# Point Tor Browser users at the onion service once it is enabled
+		# (scripts/enable-tor.sh sets ONION_ADDRESS).
+		@onion_enabled expression "'{$ONION_ADDRESS:}' != ''"
+		header @onion_enabled Onion-Location "http://{$ONION_ADDRESS:}{uri}"
+		import web_app
+	}
+}
+
+# ── Onion site (docker compose profile "tor") ────────────────────────────────
+# Reachable only from inside this container's network namespace, where the
+# tor container forwards the onion's port 80. Plain HTTP is correct here: Tor
+# already encrypts and authenticates the connection end to end, and Tor
+# Browser treats .onion as a secure context. No HSTS (it has no meaning here).
+http://:8081 {
+	bind 127.0.0.1
+	import security_headers
+
+	handle /api/* {
+		reverse_proxy api:3000 {
+			# Every onion visitor arrives from 127.0.0.1; tell the API so it can
+			# rate-limit onion traffic as one (larger) bucket.
+			header_up X-Opsec-Via onion
+		}
+	}
+
+	handle {
+		import web_app
 	}
 }

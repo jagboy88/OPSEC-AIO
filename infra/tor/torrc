@@ -1,0 +1,13 @@
+# OpSec AIO onion service (v3). This Tor instance only hosts the service:
+# no SOCKS proxy, no relaying, no exit traffic.
+DataDirectory /var/lib/tor
+SocksPort 0
+ExitRelay 0
+ExitPolicy reject *:*
+Log notice stdout
+
+# The private key in this directory IS the onion address. Back it up
+# (scripts/enable-tor.sh prints how); losing it means a new address.
+HiddenServiceDir /var/lib/tor/opsec
+HiddenServiceVersion 3
+HiddenServicePort 80 127.0.0.1:8081

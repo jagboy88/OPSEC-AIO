@@ -36,3 +36,15 @@ describe('rate-limit client keys', () => {
     expect(clientKey('2001:db8:1:2::1', pepper)).not.toBe(clientKey('2001:db8:1:3::1', pepper));
   });
 });
+
+describe('onion traffic', () => {
+  it('shares one daily bucket, distinct from any IP bucket', async () => {
+    const { rateLimitKey } = await import('../src/ratelimit.js');
+    const t = Date.UTC(2026, 10, 16, 12);
+    const onion = (ip: string) =>
+      rateLimitKey({ headers: { 'x-opsec-via': 'onion' }, ip } as never, pepper, t);
+    expect(onion('127.0.0.1')).toBe(onion('10.0.0.9'));
+    expect(onion('127.0.0.1')).toMatch(/^onion:\d+$/);
+    expect(rateLimitKey({ headers: {}, ip: '127.0.0.1' } as never, pepper, t)).not.toMatch(/^onion:/);
+  });
+});

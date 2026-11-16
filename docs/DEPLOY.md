@@ -26,8 +26,11 @@ re-run. The manual steps below are what it automates, plus what it can't do for 
 2. Log in again **using the key** and confirm it works.
 3. Only then turn off password logins:
    ```sh
-   printf 'PasswordAuthentication no\nPermitRootLogin prohibit-password\n' > /etc/ssh/sshd_config.d/99-opsec.conf
-   systemctl reload ssh
+   # 01-…: sshd keeps the FIRST value it reads, and Ubuntu cloud images ship
+   # 50-cloud-init.conf with PasswordAuthentication yes.
+   printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n' > /etc/ssh/sshd_config.d/01-opsec.conf
+   sshd -t && systemctl reload ssh
+   sshd -T | grep -E '^(passwordauthentication|permitrootlogin)'   # expect: no / without-password
    ```
 
 ## 1. Host preparation
